@@ -9,6 +9,13 @@ export const releaseCatalog = ({ client }) => ({
     return rows[0] || null;
   },
 
+  update: (number, patch) =>
+    client.rest(`releases?number=eq.${number}`, {
+      method: 'PATCH',
+      body: patch,
+      prefer: 'return=minimal',
+    }),
+
   create: (row) =>
     client.rest('releases', {
       method: 'POST',

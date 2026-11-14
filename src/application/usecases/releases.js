@@ -32,6 +32,17 @@ const manifestEnvs = async (repoHost, manifestRepo, version) => {
   }
 };
 
+const manifestComponents = async (repoHost, manifestRepo, version) => {
+  try {
+    const file = await repoHost.api(
+      `/repos/${manifestRepo}/contents/manifest.yml?ref=v${version}`);
+    return componentNamesOf(
+      Buffer.from(file.content, 'base64').toString('utf8'));
+  } catch {
+    return null;
+  }
+};
+
 const decorate = (row, ghRelease) => ({
   ...row,
   release_no: releaseNo(row.number),
@@ -78,6 +89,17 @@ export const listReleases = ({ releases, repoHost, manifestRepo }) =>
     ]);
     const byTag = Object.fromEntries(
       ghReleases.map((r) => [r.tag_name, r]));
+    // Backfill the manifest component list on rows predating the column —
+    // one fetch each, best-effort (same lazy pattern as lifecycle advance).
+    await Promise.all(rows.filter((r) => r.components == null)
+      .map(async (r) => {
+        const components = await manifestComponents(
+          repoHost, manifestRepo, r.version);
+        if (components) {
+          r.components = components;
+          await releases.update(r.number, { components }).catch(() => {});
+        }
+      }));
     return rows.map((r) => decorate(r, byTag[`v${r.version}`]));
   };
 
@@ -93,7 +115,7 @@ const RECOVERY_PLANS = [
   'Return to previous version',
 ];
 
-export const createRelease = ({ releases }) =>
+export const createRelease = ({ releases, repoHost, manifestRepo }) =>
   async ({ version, description, planned_date, trail, deploy_start,
     deploy_end, reason, product_owner, requested_by, priority, risk,
     details, impact, platform, justification, deploy_plan, risk_analysis,
@@ -125,8 +147,9 @@ export const createRelease = ({ releases }) =>
         return { status: 400, error: `${key} must be a datetime` };
     if (deploy_start && deploy_end && Date.parse(deploy_end) <= Date.parse(deploy_start))
       return { status: 400, error: 'deploy_end must be after deploy_start' };
+    const components = await manifestComponents(repoHost, manifestRepo, v);
     const release = await releases.create({
-      version: v, description: description.trim(),
+      version: v, description: description.trim(), components,
       planned_date: planned_date || null, created_by: createdBy || null,
       trail: trail || null,
       deploy_start: deploy_start || null, deploy_end: deploy_end || null,

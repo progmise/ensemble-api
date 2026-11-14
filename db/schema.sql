@@ -202,9 +202,12 @@ create table if not exists public.releases (
   on_site_followup text,               -- Yes | No — seguimiento presencial
   db_change    text,                   -- Yes | No — cambio/inclusión de base de datos
   infra_change text,                   -- Yes | No — cambio/inclusión de infraestructuras
+  components   text[],                 -- manifest@v<version> component names
   created_at   timestamptz not null default now(),
   created_by   text
 );
+
+alter table public.releases add column if not exists components text[];
 
 alter table public.releases
   add column if not exists trail        text,

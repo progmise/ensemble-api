@@ -5,10 +5,13 @@ export const applicationCatalog = ({ client }) => ({
   list: () => client.rest(
     'applications?select=*,components(name,status,lifecycle)&order=name.asc'),
 
-  async get(name) {
+  // Ref is the app id (numeric — URL-facing) or the name (legacy/admin).
+  async get(ref) {
+    const key = /^\d+$/.test(ref)
+      ? `id=eq.${encodeURIComponent(ref)}`
+      : `name=eq.${encodeURIComponent(ref)}`;
     const rows = await client.rest(
-      `applications?name=eq.${encodeURIComponent(name)}` +
-      '&select=*,components(*),' +
+      `applications?${key}&select=*,components(*),` +
       'application_members(github_username,role,members(github_username,full_name))');
     return rows[0] || null;
   },
