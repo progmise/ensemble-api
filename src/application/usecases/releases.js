@@ -158,7 +158,52 @@ export const listDeployments = ({ releases }) =>
 // Non-final statuses get re-polled against the run on every detail read.
 const FINAL = new Set(['success', 'failure', 'cancelled']);
 
-const refreshDeployments = async (releases, repoHost, manifestRepo, deps) =>
+// Environment → application lifecycle stage. Forward-only ranking —
+// terminal stages (Deleted, Decommissioned, Disuse/Inactive,
+// Friends and Family) are manual and never auto-assigned.
+const STAGE_OF_ENV = {
+  test: 'Test',
+  cert: 'Certification/Homologation',
+  pre: 'Preproduction',
+  pro: 'Production',
+};
+const LIFECYCLE_RANK = {
+  Development: 0, Test: 1, 'Certification/Homologation': 2,
+  Preproduction: 3, Production: 4,
+};
+
+const componentNamesOf = (yamlText) => {
+  const section = yamlText.split(/^components:/m)[1] || '';
+  return [...section.matchAll(/^  - name:\s*(\S+)/gm)].map((m) => m[1]);
+};
+
+// A successful env deploy advances every application whose components ride
+// in that release's manifest — best-effort, never blocks the read.
+const advanceAppLifecycles = async (
+  { applications, catalog, repoHost, manifestRepo }, version, environment) => {
+  const stage = STAGE_OF_ENV[environment];
+  if (!stage || !applications) return;
+  try {
+    const file = await repoHost.api(
+      `/repos/${manifestRepo}/contents/manifest.yml?ref=v${version}`);
+    const names = componentNamesOf(
+      Buffer.from(file.content, 'base64').toString('utf8'));
+    const apps = new Set();
+    for (const n of names) {
+      const c = await catalog.get(n).catch(() => null);
+      if (c?.application) apps.add(c.application);
+    }
+    for (const a of apps) {
+      const row = await applications.get(a).catch(() => null);
+      if (row && (LIFECYCLE_RANK[row.lifecycle] ?? -1) < LIFECYCLE_RANK[stage])
+        await applications.setLifecycle(a, stage);
+    }
+  } catch { /* lifecycle advance is advisory */ }
+};
+
+const refreshDeployments = async (
+  { releases, repoHost, manifestRepo, applications, catalog },
+  version, deps) =>
   Promise.all(deps.map(async (d) => {
     if (!d.run_id || FINAL.has(d.status)) return d;
     try {
@@ -167,14 +212,19 @@ const refreshDeployments = async (releases, repoHost, manifestRepo, deps) =>
       const status = run.status === 'completed'
         ? (run.conclusion || 'failure') : (run.status || d.status);
       if (status === d.status && run.html_url === d.run_url) return d;
-      return releases.upsertDeployment({
+      const dep = await releases.upsertDeployment({
         release_id: d.release_id, environment: d.environment, status,
         run_id: d.run_id, run_url: run.html_url,
       });
+      if (status === 'success')
+        advanceAppLifecycles(
+          { applications, catalog, repoHost, manifestRepo },
+          version, d.environment);
+      return dep;
     } catch { return d; }
   }));
 
-export const getRelease = ({ releases, repoHost, manifestRepo }) =>
+export const getRelease = ({ releases, repoHost, manifestRepo, applications, catalog }) =>
   async (number) => {
     const row = await releases.get(number);
     if (!row) return { status: 404, error: 'release not found' };
@@ -184,7 +234,8 @@ export const getRelease = ({ releases, repoHost, manifestRepo }) =>
       releases.deployments(row.number),
     ]);
     const deployments = await refreshDeployments(
-      releases, repoHost, manifestRepo, deps);
+      { releases, repoHost, manifestRepo, applications, catalog },
+      row.version, deps);
     return {
       status: 200,
       release: { ...decorate(row, gh), environments, deployments },

@@ -18,6 +18,12 @@ export const applicationCatalog = ({ client }) => ({
       prefer: 'return=representation',
     }).then((rows) => rows[0]),
 
+  setLifecycle: (name, lifecycle) =>
+    client.rest(`applications?name=eq.${encodeURIComponent(name)}`, {
+      method: 'PATCH',
+      body: { lifecycle },
+    }),
+
   // Point an existing component at this application.
   setComponentApp: (component, application) =>
     client.rest(`components?name=eq.${encodeURIComponent(component)}`, {
