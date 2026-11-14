@@ -26,7 +26,7 @@ export const allowedEnvironments = ({ applications }) =>
   async (member) => {
     if (!member) return ENVIRONMENTS;             // bootstrap allowlist user
     const rows = await applications.memberRoles(member.github_username);
-    return envsForRoles(rows.map((r) => r.role));
+    return envsForRoles(rows.flatMap((r) => r.roles || []));
   };
 
 export const listSecrets = ({ store }) =>
@@ -57,7 +57,7 @@ export const upsertSecret = ({ store, applications }) =>
       const app = await applications.get(n.toLowerCase().replace(/_/g, '-'))
         .catch(() => null);
       const roles = rows.filter((r) => !app || r.application === app.name)
-        .map((r) => r.role);
+        .flatMap((r) => r.roles || []);
       const envs = app && !roles.length ? [] : envsForRoles(roles);
       if (!envs.includes(env))
         return { status: 403, error: `role does not allow writing '${env}' secrets` };

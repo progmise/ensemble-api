@@ -48,26 +48,29 @@ export const createApplication = ({ applications, catalog, teams }) =>
     if (createdBy)
       await applications.addMember({
         application: n, github_username: String(createdBy).toLowerCase(),
-        role: 'product-owner', added_by: String(createdBy),
+        roles: ['product-owner'], added_by: String(createdBy),
       }).catch(() => {});
     for (const c of components) await applications.setComponentApp(c, n);
     return { status: 201, application: withStage({ ...application, components: [] }) };
   };
 
-// Attach a registered member to an application with a role.
+// Attach a registered member to an application with one or more roles.
 export const addApplicationMember = ({ applications, members }) =>
-  async (appName, { github_username, role }, addedBy) => {
+  async (appName, { github_username, role, roles }, addedBy) => {
     const app = await applications.get(appName);
     if (!app) return { status: 404, error: 'application not found' };
-    if (!APP_ROLES.includes(role))
-      return { status: 400, error: `role must be one of ${APP_ROLES.join('/')}` };
+    const rs = (Array.isArray(roles) ? roles : [role])
+      .filter((r) => typeof r === 'string');
+    if (!rs.length || !rs.every((r) => APP_ROLES.includes(r)))
+      return { status: 400, error: `roles must be a non-empty subset of ${APP_ROLES.join('/')}` };
     const u = String(github_username || '').trim().toLowerCase();
     if (!u || !await members.get(u))
       return { status: 400, error: 'member is not registered' };
     if ((app.application_members || []).some((am) => am.github_username === u))
       return { status: 409, error: 'member is already in the application' };
     await applications.addMember({
-      application: app.name, github_username: u, role, added_by: addedBy || '',
+      application: app.name, github_username: u,
+      roles: [...new Set(rs)], added_by: addedBy || '',
     });
     return { status: 201, application: await applications.get(appName) };
   };

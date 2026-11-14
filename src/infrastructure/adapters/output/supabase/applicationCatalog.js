@@ -12,14 +12,14 @@ export const applicationCatalog = ({ client }) => ({
       : `name=eq.${encodeURIComponent(ref)}`;
     const rows = await client.rest(
       `applications?${key}&select=*,components(*),` +
-      'application_members(github_username,role,members(github_username,full_name))');
+      'application_members(github_username,roles,added_at,members(github_username,full_name,email))');
     return rows[0] || null;
   },
 
   // Roles a member holds across applications — secrets gating reads them.
   memberRoles: (username) => client.rest(
     `application_members?github_username=eq.${encodeURIComponent(username)}` +
-    '&select=application,role'),
+    '&select=application,roles'),
 
   addMember: (row) =>
     client.rest('application_members', {

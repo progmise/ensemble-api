@@ -336,16 +336,25 @@ create policy team_members_service on public.team_members
   for all to service_role using (true) with check (true);
 
 -- Per-application roles — membership in the platform (members row) grants
--- login; what a member can DO on each app is gated by their role here.
+-- login; what a member can DO on each app is gated by their roles here
+-- (a member may hold several, e.g. technical-lead + developer).
 create table if not exists public.application_members (
   application     text not null references public.applications(name) on delete cascade,
   github_username text not null references public.members(github_username) on delete cascade,
-  role            text not null
-    check (role in ('developer','technical-lead','product-owner')),
+  roles           text[] not null
+    check (cardinality(roles) > 0 and
+           roles <@ '{developer,technical-lead,product-owner}'::text[]),
   added_by        text not null default '',
   added_at        timestamptz not null default now(),
   primary key (application, github_username)
 );
+-- Migration from the single-role column:
+--   alter table public.application_members drop constraint if exists application_members_role_check;
+--   alter table public.application_members rename column role to roles;
+--   alter table public.application_members alter column roles type text[] using array[roles];
+--   alter table public.application_members alter column roles set not null;
+--   alter table public.application_members add constraint application_members_roles_check
+--     check (cardinality(roles) > 0 and roles <@ '{developer,technical-lead,product-owner}'::text[]);
 
 alter table public.application_members enable row level security;
 
