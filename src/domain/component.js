@@ -7,8 +7,8 @@ export const BRANCH_STRATEGIES = ['gitflow', 'trunk'];
 
 // Application lifecycle stages — what the applications list filter offers.
 export const APP_LIFECYCLES = [
-  'Certification/Homologation', 'Decommissioned', 'Deleted', 'Development',
-  'Disuse/Inactive', 'Friends and Family', 'Preproduction', 'Production',
+  'Certification/Homologation', 'Deleted', 'Development',
+  'Disuse/Inactive', 'Preproduction', 'Production',
   'Test',
 ];
 

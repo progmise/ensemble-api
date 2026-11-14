@@ -159,10 +159,9 @@ export const listDeployments = ({ releases }) =>
 const FINAL = new Set(['success', 'failure', 'cancelled']);
 
 // Environment → application lifecycle stage. Forward-only ranking —
-// terminal stages (Deleted, Decommissioned, Disuse/Inactive,
-// Friends and Family) are manual and never auto-assigned.
+// terminal stages (Deleted, Disuse/Inactive) are manual and never
+// auto-assigned. `test` envs don't map to a lifecycle stage yet.
 const STAGE_OF_ENV = {
-  test: 'Test',
   cert: 'Certification/Homologation',
   pre: 'Preproduction',
   pro: 'Production',
