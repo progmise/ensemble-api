@@ -5,12 +5,27 @@ export const REPO_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/;
 export const SHORTNAME_RE = /^[A-Z0-9]{2,30}$/;
 export const BRANCH_STRATEGIES = ['gitflow', 'trunk'];
 
-// Application lifecycle stages — what the applications list filter offers.
+// Lifecycle stages — components carry the stage (deployable unit); the
+// application's stage is derived as the max of its components'.
 export const APP_LIFECYCLES = [
   'Certification/Homologation', 'Deleted', 'Development',
   'Disuse/Inactive', 'Preproduction', 'Production',
   'Test',
 ];
+
+// Forward-only rank — terminal stages (Deleted, Disuse/Inactive) are
+// manual, never auto-assigned, so they rank out of the promotion track.
+export const LIFECYCLE_RANK = {
+  Development: 0, Test: 1, 'Certification/Homologation': 2,
+  Preproduction: 3, Production: 4,
+};
+export const stageRank = (s) => LIFECYCLE_RANK[s] ?? -1;
+
+// Application stage = max stage among its components (Development if none).
+export const deriveAppStage = (components = []) =>
+  components.reduce((best, c) =>
+    stageRank(c.lifecycle) > stageRank(best) ? c.lifecycle : best,
+    'Development');
 
 export const validComponentName = (name) => NAME_RE.test(name || '');
 export const validRepoName = (repo) => REPO_RE.test(repo || '');

@@ -3,6 +3,8 @@
 // Publish and per-env deploys go through repoHost with the admin token —
 // the frontend never touches GitHub directly for these actions.
 
+import { stageRank } from '../../domain/component.js';
+
 const SEMVER = /^\d+\.\d+\.\d+$/;
 export const releaseNo = (n) => `RLSE${String(n).padStart(7, '0')}`;
 
@@ -158,17 +160,12 @@ export const listDeployments = ({ releases }) =>
 // Non-final statuses get re-polled against the run on every detail read.
 const FINAL = new Set(['success', 'failure', 'cancelled']);
 
-// Environment → application lifecycle stage. Forward-only ranking —
-// terminal stages (Deleted, Disuse/Inactive) are manual and never
-// auto-assigned. `test` envs don't map to a lifecycle stage yet.
+// Environment → component lifecycle stage. Forward-only ranking (domain
+// LIFECYCLE_RANK); terminal stages stay manual. `test` envs don't map yet.
 const STAGE_OF_ENV = {
   cert: 'Certification/Homologation',
   pre: 'Preproduction',
   pro: 'Production',
-};
-const LIFECYCLE_RANK = {
-  Development: 0, Test: 1, 'Certification/Homologation': 2,
-  Preproduction: 3, Production: 4,
 };
 
 const componentNamesOf = (yamlText) => {
@@ -176,33 +173,27 @@ const componentNamesOf = (yamlText) => {
   return [...section.matchAll(/^  - name:\s*(\S+)/gm)].map((m) => m[1]);
 };
 
-// A successful env deploy advances every application whose components ride
-// in that release's manifest — best-effort, never blocks the read.
-const advanceAppLifecycles = async (
-  { applications, catalog, repoHost, manifestRepo }, version, environment) => {
+// A successful env deploy advances the lifecycle of every component in
+// that release's manifest — best-effort, never blocks the read.
+const advanceComponentLifecycles = async (
+  { catalog, repoHost, manifestRepo }, version, environment) => {
   const stage = STAGE_OF_ENV[environment];
-  if (!stage || !applications) return;
+  if (!stage || !catalog) return;
   try {
     const file = await repoHost.api(
       `/repos/${manifestRepo}/contents/manifest.yml?ref=v${version}`);
     const names = componentNamesOf(
       Buffer.from(file.content, 'base64').toString('utf8'));
-    const apps = new Set();
     for (const n of names) {
       const c = await catalog.get(n).catch(() => null);
-      if (c?.application) apps.add(c.application);
-    }
-    for (const a of apps) {
-      const row = await applications.get(a).catch(() => null);
-      if (row && (LIFECYCLE_RANK[row.lifecycle] ?? -1) < LIFECYCLE_RANK[stage])
-        await applications.setLifecycle(a, stage);
+      if (c && stageRank(c.lifecycle) < stageRank(stage))
+        await catalog.update(n, { lifecycle: stage });
     }
   } catch { /* lifecycle advance is advisory */ }
 };
 
 const refreshDeployments = async (
-  { releases, repoHost, manifestRepo, applications, catalog },
-  version, deps) =>
+  { releases, repoHost, manifestRepo, catalog }, version, deps) =>
   Promise.all(deps.map(async (d) => {
     if (!d.run_id || FINAL.has(d.status)) return d;
     try {
@@ -216,14 +207,13 @@ const refreshDeployments = async (
         run_id: d.run_id, run_url: run.html_url,
       });
       if (status === 'success')
-        advanceAppLifecycles(
-          { applications, catalog, repoHost, manifestRepo },
-          version, d.environment);
+        advanceComponentLifecycles(
+          { catalog, repoHost, manifestRepo }, version, d.environment);
       return dep;
     } catch { return d; }
   }));
 
-export const getRelease = ({ releases, repoHost, manifestRepo, applications, catalog }) =>
+export const getRelease = ({ releases, repoHost, manifestRepo, catalog }) =>
   async (number) => {
     const row = await releases.get(number);
     if (!row) return { status: 404, error: 'release not found' };
@@ -233,8 +223,7 @@ export const getRelease = ({ releases, repoHost, manifestRepo, applications, cat
       releases.deployments(row.number),
     ]);
     const deployments = await refreshDeployments(
-      { releases, repoHost, manifestRepo, applications, catalog },
-      row.version, deps);
+      { releases, repoHost, manifestRepo, catalog }, row.version, deps);
     return {
       status: 200,
       release: { ...decorate(row, gh), environments, deployments },

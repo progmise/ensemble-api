@@ -71,7 +71,7 @@ const usecases = {
   releaseOptions: releaseOptions({ repoHost, manifestRepo: env.manifestRepo }),
   createRelease: createRelease({ releases }),
   getRelease: getRelease({ releases, repoHost, manifestRepo: env.manifestRepo,
-                           applications, catalog }),
+                           catalog }),
   publishRelease: publishRelease({ releases, repoHost, manifestRepo: env.manifestRepo }),
   deployRelease: deployRelease({ releases, repoHost, manifestRepo: env.manifestRepo }),
   listDeployments: listDeployments({ releases }),

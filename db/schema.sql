@@ -287,10 +287,15 @@ alter table public.applications
   add column if not exists id bigint generated always as identity;
 create unique index if not exists applications_id_key on public.applications(id);
 
--- Lifecycle stage — filters the applications list (Development, Production,
--- Test, ...). Free text like teams.type: the stage list is a UI convention.
-alter table public.applications
+-- Lifecycle lives on the component — the deployable unit. The
+-- application's stage is DERIVED (max of its components' stages) at read
+-- time; nothing is stored on applications.
+alter table public.components
   add column if not exists lifecycle text not null default 'Development';
+
+-- One-time migration on existing databases:
+--   alter table public.applications drop column if exists lifecycle;
+--   update public.components set lifecycle = 'Production';  -- already shipped
 
 -- Team registry — high-level groups that own functionality (templates,
 -- workflows, application owners...). `type` stays free text: the granular
