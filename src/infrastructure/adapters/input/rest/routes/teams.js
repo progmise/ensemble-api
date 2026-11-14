@@ -27,9 +27,10 @@ export const teamsRouter = ({ usecases, catalogReady }) => {
       const session = await auth(req, res);
       if (!session) return;
       if (!catalogOk(res)) return;
-      const { name, shortname, type, description, owners } = req.body || {};
+      const { name, shortname, type, description, owners,
+              can_create_apps } = req.body || {};
       const result = await usecases.createTeam({
-        name, shortname, type, description, owners,
+        name, shortname, type, description, owners, can_create_apps,
         createdBy: session.user.login,
       });
       res.status(result.status).json(result.team ?? { error: result.error });

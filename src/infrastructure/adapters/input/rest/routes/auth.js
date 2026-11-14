@@ -37,7 +37,8 @@ export const authRouter = ({ env, usecases }) => {
       res.json({
         login: session.user.login, avatar_url: session.user.avatar_url,
         member: session.member || null,
-        secret_envs: usecases.secretEnvs ? usecases.secretEnvs(session.member) : undefined,
+        secret_envs: usecases.secretEnvs
+          ? await usecases.secretEnvs(session.member) : undefined,
       });
     });
 };

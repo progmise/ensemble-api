@@ -22,6 +22,14 @@ export const teamCatalog = ({ client }) => ({
       prefer: 'return=representation',
     }).then((rows) => rows[0]),
 
+  // Is the member in at least one team flagged can_create_apps?
+  async memberCanCreateApps(username) {
+    const rows = await client.rest(
+      `team_members?github_username=eq.${encodeURIComponent(username)}` +
+      '&select=teams!inner(can_create_apps)&teams.can_create_apps=eq.true');
+    return rows.length > 0;
+  },
+
   addMembers: (rows) =>
     client.rest('team_members', {
       method: 'POST',

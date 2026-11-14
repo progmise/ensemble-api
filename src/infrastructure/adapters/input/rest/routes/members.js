@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { authedUser } from '../middleware/session.js';
 
-// Team registry — any authenticated member can list and register members
-// (roles gate *what* a member can do, not who can add people; revisit if
-// we need admin-only alta).
+// Member registry — any authenticated member can list and register members.
+// Registration grants platform access only; per-app roles live in
+// application_members.
 export const membersRouter = ({ usecases, catalogReady }) => {
   const auth = authedUser({ resolveSession: usecases.resolveSession });
 
@@ -26,9 +26,9 @@ export const membersRouter = ({ usecases, catalogReady }) => {
       if (!catalogReady()) {
         return res.status(503).json({ error: 'member catalog not configured (SUPABASE_*)' });
       }
-      const { github_username, full_name, email, roles } = req.body || {};
+      const { github_username, full_name, email } = req.body || {};
       const result = await usecases.createMember({
-        github_username, full_name, email, roles, createdBy: session.user.login,
+        github_username, full_name, email, createdBy: session.user.login,
       });
       res.status(result.status).json(result.member ?? { error: result.error });
     });

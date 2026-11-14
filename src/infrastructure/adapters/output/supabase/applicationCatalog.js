@@ -7,9 +7,23 @@ export const applicationCatalog = ({ client }) => ({
 
   async get(name) {
     const rows = await client.rest(
-      `applications?name=eq.${encodeURIComponent(name)}&select=*,components(*)`);
+      `applications?name=eq.${encodeURIComponent(name)}` +
+      '&select=*,components(*),' +
+      'application_members(github_username,role,members(github_username,full_name))');
     return rows[0] || null;
   },
+
+  // Roles a member holds across applications — secrets gating reads them.
+  memberRoles: (username) => client.rest(
+    `application_members?github_username=eq.${encodeURIComponent(username)}` +
+    '&select=application,role'),
+
+  addMember: (row) =>
+    client.rest('application_members', {
+      method: 'POST',
+      body: row,
+      prefer: 'return=minimal',
+    }),
 
   create: (row) =>
     client.rest('applications', {

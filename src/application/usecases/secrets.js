@@ -6,7 +6,10 @@
 // workflows resolve each entry to a `sensitive` env var on the target
 // Vercel project.
 //
-// Role gate — which environments a member can write:
+// Role gate — roles live in application_members (per-app). To write the
+// secrets of app X a member needs a role IN app X; when the secret name
+// doesn't match an application, the member's roles across all their apps
+// decide:
 //   developer                        → cert, pre
 //   technical-lead | product-owner   → cert, pre, pro
 // No member row (bootstrap ALLOWED_USERS) → all environments.
@@ -15,12 +18,16 @@ const PRO_ROLES = new Set(['technical-lead', 'product-owner']);
 
 const NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 
-export const allowedEnvironments = (member) => {
-  if (!member) return ENVIRONMENTS;               // bootstrap allowlist user
-  return (member.roles || []).some((r) => PRO_ROLES.has(r))
-    ? ENVIRONMENTS
-    : ['cert', 'pre'];
-};
+const envsForRoles = (roles = []) =>
+  roles.some((r) => PRO_ROLES.has(r)) ? ENVIRONMENTS : ['cert', 'pre'];
+
+// UI hint — the env list the member can reach via any of their app roles.
+export const allowedEnvironments = ({ applications }) =>
+  async (member) => {
+    if (!member) return ENVIRONMENTS;             // bootstrap allowlist user
+    const rows = await applications.memberRoles(member.github_username);
+    return envsForRoles(rows.map((r) => r.role));
+  };
 
 export const listSecrets = ({ store }) =>
   async ({ environment }) => {
@@ -33,16 +40,29 @@ export const listSecrets = ({ store }) =>
 
 // entries: {CLAVE: valor} — merged into the existing entry map server-side,
 // so rotating one key never wipes the others (values are write-only).
-export const upsertSecret = ({ store }) =>
+export const upsertSecret = ({ store, applications }) =>
   async ({ name, environment, entries, member, actor }) => {
     const env = String(environment || '').toLowerCase();
     if (!ENVIRONMENTS.includes(env))
       return { status: 400, error: `environment must be one of ${ENVIRONMENTS.join('/')}` };
-    if (!allowedEnvironments(member).includes(env))
-      return { status: 403, error: `role does not allow writing '${env}' secrets` };
     const n = String(name || '').trim().toUpperCase();
     if (!NAME_RE.test(n))
       return { status: 400, error: 'name must be env-var style (e.g. LOANS_API)' };
+
+    if (member) {
+      const rows = await applications.memberRoles(member.github_username);
+      // The secret name IS the applicativo — if it maps to a registered app,
+      // the member must hold a role in THAT app; otherwise their roles
+      // across all apps decide (platform-level secrets).
+      const app = await applications.get(n.toLowerCase().replace(/_/g, '-'))
+        .catch(() => null);
+      const roles = rows.filter((r) => !app || r.application === app.name)
+        .map((r) => r.role);
+      const envs = app && !roles.length ? [] : envsForRoles(roles);
+      if (!envs.includes(env))
+        return { status: 403, error: `role does not allow writing '${env}' secrets` };
+    }
+
     const merged = {};
     for (const [k, v] of Object.entries(entries || {})) {
       const key = String(k).trim().toUpperCase();

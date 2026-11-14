@@ -18,7 +18,8 @@ import { listTemplates, createTemplate } from './application/usecases/listTempla
 import { provisionComponent, createComponent }
   from './application/usecases/provisionComponent.js';
 import { createMember } from './application/usecases/members.js';
-import { listApplications, getApplication, createApplication }
+import { listApplications, getApplication, createApplication,
+  addApplicationMember }
   from './application/usecases/applications.js';
 import { listTeams, getTeam, createTeam, addTeamMember }
   from './application/usecases/teams.js';
@@ -60,14 +61,15 @@ const usecases = {
   createMember: createMember({ members, repoHost }),
   listApplications: listApplications({ applications }),
   getApplication: getApplication({ applications }),
-  createApplication: createApplication({ applications, catalog }),
+  createApplication: createApplication({ applications, catalog, teams }),
+  addApplicationMember: addApplicationMember({ applications, members }),
   listTeams: listTeams({ teams }),
   getTeam: getTeam({ teams }),
   createTeam: createTeam({ teams, members }),
   addTeamMember: addTeamMember({ teams, members }),
   listSecrets: listSecrets({ store }),
-  upsertSecret: upsertSecret({ store }),
-  secretEnvs: allowedEnvironments,
+  upsertSecret: upsertSecret({ store, applications }),
+  secretEnvs: allowedEnvironments({ applications }),
   listReleases: listReleases({ releases, repoHost, manifestRepo: env.manifestRepo }),
   releaseOptions: releaseOptions({ repoHost, manifestRepo: env.manifestRepo }),
   createRelease: createRelease({ releases }),

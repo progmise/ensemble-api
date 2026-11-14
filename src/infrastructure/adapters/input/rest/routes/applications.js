@@ -31,7 +31,7 @@ export const applicationsRouter = ({ usecases, catalogReady }) => {
               components } = req.body || {};
       const result = await usecases.createApplication({
         name, alias, business_unit, description, repo_prefix, components,
-        createdBy: session.user.login,
+        createdBy: session.user.login, member: session.member,
       });
       res.status(result.status).json(result.application ?? { error: result.error });
     })
@@ -41,5 +41,15 @@ export const applicationsRouter = ({ usecases, catalogReady }) => {
       if (!catalogOk(res)) return;
       const row = await usecases.getApplication(req.params.name).catch(() => null);
       return row ? res.json(row) : res.status(404).json({ error: 'not found' });
+    })
+
+    .post('/api/applications/:name/members', async (req, res) => {
+      const session = await auth(req, res);
+      if (!session) return;
+      if (!catalogOk(res)) return;
+      const { github_username, role } = req.body || {};
+      const result = await usecases.addApplicationMember(req.params.name,
+        { github_username, role }, session.user.login);
+      res.status(result.status).json(result.application ?? { error: result.error });
     });
 };

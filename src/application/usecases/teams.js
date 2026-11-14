@@ -30,7 +30,7 @@ export const addTeamMember = ({ teams, members }) =>
 
 export const createTeam = ({ teams, members }) =>
   async ({ name, shortname, type = '', description = '',
-           owners = [], createdBy }) => {
+           owners = [], can_create_apps = false, createdBy }) => {
     const n = String(name || '').trim();
     if (!n || n.length > 80) return { status: 400, error: 'invalid team name' };
     const s = String(shortname || '').trim() || initials(n);
@@ -45,6 +45,7 @@ export const createTeam = ({ teams, members }) =>
     await teams.create({
       name: n, shortname: s, type: type.trim(),
       description: description.trim(), created_by: createdBy || '',
+      can_create_apps: !!can_create_apps,
     });
     if (ownerList.length)
       await teams.addMembers(ownerList.map((o) => ({

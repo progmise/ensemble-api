@@ -156,18 +156,15 @@ drop policy if exists secret_events_service on public.secret_events;
 create policy secret_events_service on public.secret_events
   for all to service_role using (true) with check (true);
 
--- Team registry — gates login (alongside ALLOWED_USERS) and drives roles:
---   developer       repo access
---   technical-lead  approves PRs (future: required reviewer on release PRs)
+-- Member registry — a row gates login (alongside ALLOWED_USERS bootstrap).
+-- No roles here: access means "can use the platform"; permissions live in
+-- application_members (per-app roles) and team membership.
 create table if not exists public.members (
   github_username text primary key,
   full_name       text not null,
   email           text not null,
-  roles           text[] not null default '{developer}',
   created_at      timestamptz not null default now(),
-  created_by      text,
-  constraint members_roles_check
-    check (roles <@ array['developer','technical-lead','product-owner']::text[])
+  created_by      text
 );
 
 alter table public.members enable row level security;
@@ -334,3 +331,25 @@ alter table public.team_members enable row level security;
 drop policy if exists team_members_service on public.team_members;
 create policy team_members_service on public.team_members
   for all to service_role using (true) with check (true);
+
+-- Per-application roles — membership in the platform (members row) grants
+-- login; what a member can DO on each app is gated by their role here.
+create table if not exists public.application_members (
+  application     text not null references public.applications(name) on delete cascade,
+  github_username text not null references public.members(github_username) on delete cascade,
+  role            text not null
+    check (role in ('developer','technical-lead','product-owner')),
+  added_by        text not null default '',
+  added_at        timestamptz not null default now(),
+  primary key (application, github_username)
+);
+
+alter table public.application_members enable row level security;
+
+drop policy if exists application_members_service on public.application_members;
+create policy application_members_service on public.application_members
+  for all to service_role using (true) with check (true);
+
+-- App creation is gated to members of a designated team (e.g. Platform Team).
+alter table public.teams
+  add column if not exists can_create_apps boolean not null default false;
