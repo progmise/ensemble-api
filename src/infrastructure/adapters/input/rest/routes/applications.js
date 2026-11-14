@@ -27,9 +27,10 @@ export const applicationsRouter = ({ usecases, catalogReady }) => {
       const session = await auth(req, res);
       if (!session) return;
       if (!catalogOk(res)) return;
-      const { name, alias, business_unit, description, repo_prefix, components } = req.body || {};
+      const { name, alias, business_unit, description, repo_prefix, lifecycle,
+              components } = req.body || {};
       const result = await usecases.createApplication({
-        name, alias, business_unit, description, repo_prefix, components,
+        name, alias, business_unit, description, repo_prefix, lifecycle, components,
         createdBy: session.user.login,
       });
       res.status(result.status).json(result.application ?? { error: result.error });
