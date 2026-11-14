@@ -4,9 +4,13 @@ export const teamCatalog = ({ client }) => ({
   list: () => client.rest(
     'teams?select=*,team_members(github_username,owner)&order=name.asc'),
 
-  async get(name) {
+  // Lookup by numeric id or by name — URLs carry the id.
+  async get(key) {
+    const pred = /^\d+$/.test(key)
+      ? `id=eq.${encodeURIComponent(key)}`
+      : `name=eq.${encodeURIComponent(key)}`;
     const rows = await client.rest(
-      `teams?name=eq.${encodeURIComponent(name)}` +
+      `teams?${pred}` +
       '&select=*,team_members(github_username,owner,members(github_username,full_name))');
     return rows[0] || null;
   },

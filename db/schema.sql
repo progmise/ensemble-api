@@ -309,6 +309,11 @@ create table if not exists public.teams (
   created_at  timestamptz not null default now()
 );
 
+-- Incremental numeric id — used in team URLs (/teams/<id>).
+alter table public.teams
+  add column if not exists id bigint generated always as identity;
+create unique index if not exists teams_id_key on public.teams(id);
+
 alter table public.teams enable row level security;
 
 drop policy if exists teams_service on public.teams;

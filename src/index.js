@@ -20,7 +20,7 @@ import { provisionComponent, createComponent }
 import { createMember } from './application/usecases/members.js';
 import { listApplications, getApplication, createApplication }
   from './application/usecases/applications.js';
-import { listTeams, getTeam, createTeam }
+import { listTeams, getTeam, createTeam, addTeamMember }
   from './application/usecases/teams.js';
 import { listSecrets, upsertSecret, allowedEnvironments }
   from './application/usecases/secrets.js';
@@ -64,6 +64,7 @@ const usecases = {
   listTeams: listTeams({ teams }),
   getTeam: getTeam({ teams }),
   createTeam: createTeam({ teams, members }),
+  addTeamMember: addTeamMember({ teams, members }),
   listSecrets: listSecrets({ store }),
   upsertSecret: upsertSecret({ store }),
   secretEnvs: allowedEnvironments,

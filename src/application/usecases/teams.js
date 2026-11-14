@@ -9,7 +9,24 @@ const initials = (name) =>
     .replace(/[^A-Z0-9]/g, '').slice(0, 30);
 
 export const listTeams = ({ teams }) => () => teams.list();
-export const getTeam = ({ teams }) => (name) => teams.get(name);
+export const getTeam = ({ teams }) => (idOrName) => teams.get(idOrName);
+
+// Attach a registered member to a team (as member or owner).
+export const addTeamMember = ({ teams, members }) =>
+  async (teamId, { github_username, owner = false }, addedBy) => {
+    const team = await teams.get(teamId);
+    if (!team) return { status: 404, error: 'team not found' };
+    const u = String(github_username || '').trim().toLowerCase();
+    if (!u || !await members.get(u))
+      return { status: 400, error: 'member is not registered' };
+    if ((team.team_members || []).some((tm) => tm.github_username === u))
+      return { status: 409, error: 'member is already in the team' };
+    await teams.addMembers([{
+      team: team.name, github_username: u,
+      owner: !!owner, added_by: addedBy || '',
+    }]);
+    return { status: 201, team: await teams.get(teamId) };
+  };
 
 export const createTeam = ({ teams, members }) =>
   async ({ name, shortname, type = '', description = '',

@@ -35,10 +35,20 @@ export const teamsRouter = ({ usecases, catalogReady }) => {
       res.status(result.status).json(result.team ?? { error: result.error });
     })
 
-    .get('/api/teams/:name', async (req, res) => {
+    .get('/api/teams/:id', async (req, res) => {
       if (!await auth(req, res)) return;
       if (!catalogOk(res)) return;
-      const row = await usecases.getTeam(req.params.name).catch(() => null);
+      const row = await usecases.getTeam(req.params.id).catch(() => null);
       return row ? res.json(row) : res.status(404).json({ error: 'not found' });
+    })
+
+    .post('/api/teams/:id/members', async (req, res) => {
+      const session = await auth(req, res);
+      if (!session) return;
+      if (!catalogOk(res)) return;
+      const { github_username, owner } = req.body || {};
+      const result = await usecases.addTeamMember(req.params.id,
+        { github_username, owner }, session.user.login);
+      res.status(result.status).json(result.team ?? { error: result.error });
     });
 };
