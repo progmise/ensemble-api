@@ -1,4 +1,4 @@
--- deploy-orchestrator-api — component catalog
+-- ensemble-api — component catalog
 -- Apply in the Supabase SQL editor (or `supabase db push`).
 --
 -- The API talks to this table via PostgREST using the service_role key,
@@ -52,7 +52,7 @@ revoke all on public.templates from anon, authenticated;
 create table if not exists public.components (
   -- Component identity — lands in deploy-manifest as components[].name
   name             text primary key,
-  -- Uppercase/digit alias (Ensemble "short_name"); prefixes manifest infra ids
+  -- Uppercase/digit alias ("short_name"); prefixes manifest infra ids
   -- e.g. LOANSAPI -> loans-api-pro
   shortname        text not null,
   -- Full repo coordinates, e.g. progmise/loans-api
@@ -253,4 +253,69 @@ alter table public.release_deployments enable row level security;
 
 drop policy if exists release_deployments_service on public.release_deployments;
 create policy release_deployments_service on public.release_deployments
+  for all to service_role using (true) with check (true);
+
+-- Application registry — the grouping level above components (an app like
+-- 'ensemble' owns the ensemble-web front + its api). Catalog-only
+-- metadata: deploy-manifest keeps flat components[].
+create table if not exists public.applications (
+  name          text primary key,            -- kebab-case, e.g. ensemble
+  alias         text not null,               -- uppercase short name, e.g. ENSMBL
+  business_unit text not null default '',
+  description   text not null default '',
+  created_by    text not null default '',
+  created_at    timestamptz not null default now()
+);
+
+alter table public.applications enable row level security;
+
+drop policy if exists applications_service on public.applications;
+create policy applications_service on public.applications
+  for all to service_role using (true) with check (true);
+
+alter table public.components
+  add column if not exists application text references public.applications(name);
+
+-- Repo naming convention per application — new components get repos named
+-- {repo_prefix}-{suffix} (defaults to the app name when empty). Lets an app
+-- keep a custom prefix (defaults to the application name).
+alter table public.applications
+  add column if not exists repo_prefix text not null default '';
+
+-- Incremental numeric id — shown as "ID: <n>" in the UI (name stays the PK).
+alter table public.applications
+  add column if not exists id bigint generated always as identity;
+create unique index if not exists applications_id_key on public.applications(id);
+
+-- Team registry — high-level groups that own functionality (templates,
+-- workflows, application owners...). `type` stays free text: the granular
+-- permission types emerge as features demand gating (membership checks).
+create table if not exists public.teams (
+  name        text primary key,
+  shortname   text not null,
+  type        text not null default '',
+  description text not null default '',
+  created_by  text not null default '',
+  created_at  timestamptz not null default now()
+);
+
+alter table public.teams enable row level security;
+
+drop policy if exists teams_service on public.teams;
+create policy teams_service on public.teams
+  for all to service_role using (true) with check (true);
+
+create table if not exists public.team_members (
+  team           text not null references public.teams(name) on delete cascade,
+  github_username text not null references public.members(github_username) on delete cascade,
+  owner          boolean not null default false,
+  added_by       text not null default '',
+  added_at       timestamptz not null default now(),
+  primary key (team, github_username)
+);
+
+alter table public.team_members enable row level security;
+
+drop policy if exists team_members_service on public.team_members;
+create policy team_members_service on public.team_members
   for all to service_role using (true) with check (true);

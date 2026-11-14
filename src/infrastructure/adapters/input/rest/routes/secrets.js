@@ -24,9 +24,9 @@ export const secretsRouter = ({ usecases, catalogReady }) => {
       if (!catalogReady()) {
         return res.status(503).json({ error: 'credential store not configured (SUPABASE_*)' });
       }
-      const { name, environment, value } = req.body || {};
+      const { name, environment, entries } = req.body || {};
       const result = await usecases.upsertSecret({
-        name, environment, value,
+        name, environment, entries,
         member: session.member, actor: session.user.login,
       });
       res.status(result.status).json(result.error ? { error: result.error } : result);

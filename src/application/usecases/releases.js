@@ -38,7 +38,7 @@ const decorate = (row, ghRelease) => ({
 });
 
 // Options for the "Nueva release" form: every deploy-manifest GitHub
-// Release (drafts first, then published — like Ensemble's "Versión OAM" list)
+// Release (drafts first, then published)
 // plus the deployment trails derivable from the manifest's environments.
 export const releaseOptions = ({ repoHost, manifestRepo }) =>
   async () => {

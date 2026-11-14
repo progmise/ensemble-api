@@ -27,13 +27,26 @@ export const platformConfigStore = ({ client }) => ({
   },
 
   // Application secrets (Seguridad view) — vault keys are `<NAME>__<ENV>`
-  // (env uppercased). Names are listed, values are write-only through the
+  // (env uppercased); each value is a JSON map of `{CLAVE: valor}` entries.
+  // Entry keys are listed (values never leave), writes go through the
   // put_platform_secret RPC; every write appends a secret_events audit row.
-  async secretNames(env) {
+  async secrets(env) {
     const suffix = `__${String(env).toUpperCase()}`;
     const rows = await client.rest(
-      `platform_secrets?select=name&name=like.*${suffix}`);
-    return rows.map((r) => r.name.slice(0, -suffix.length));
+      `platform_secrets?select=name,value&name=like.*${suffix}`);
+    return rows.map((r) => {
+      let keys = [];
+      try { keys = Object.keys(JSON.parse(r.value)); } catch { /* opaque */ }
+      return { name: r.name.slice(0, -suffix.length), keys };
+    });
+  },
+
+  // Server-side only — used to merge new entries into an existing secret
+  // before rewriting (values never reach the frontend).
+  async secretValue(name) {
+    const rows = await client.rest(
+      `platform_secrets?select=value&name=eq.${encodeURIComponent(name)}`);
+    return rows[0]?.value ?? null;
   },
 
   async putSecret(name, value, { actor }) {

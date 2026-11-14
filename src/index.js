@@ -7,6 +7,8 @@ import { githubAdmin } from './infrastructure/adapters/output/githubAdmin.js';
 import { supabaseClient } from './infrastructure/adapters/output/supabase/client.js';
 import { componentCatalog } from './infrastructure/adapters/output/supabase/componentCatalog.js';
 import { memberCatalog } from './infrastructure/adapters/output/supabase/memberCatalog.js';
+import { applicationCatalog } from './infrastructure/adapters/output/supabase/applicationCatalog.js';
+import { teamCatalog } from './infrastructure/adapters/output/supabase/teamCatalog.js';
 import { releaseCatalog } from './infrastructure/adapters/output/supabase/releaseCatalog.js';
 import { templateCatalog } from './infrastructure/adapters/output/supabase/templateCatalog.js';
 import { platformConfigStore } from './infrastructure/adapters/output/supabase/platformConfigStore.js';
@@ -16,6 +18,10 @@ import { listTemplates, createTemplate } from './application/usecases/listTempla
 import { provisionComponent, createComponent }
   from './application/usecases/provisionComponent.js';
 import { createMember } from './application/usecases/members.js';
+import { listApplications, getApplication, createApplication }
+  from './application/usecases/applications.js';
+import { listTeams, getTeam, createTeam }
+  from './application/usecases/teams.js';
 import { listSecrets, upsertSecret, allowedEnvironments }
   from './application/usecases/secrets.js';
 import { listReleases, createRelease, getRelease, publishRelease, deployRelease,
@@ -39,6 +45,8 @@ const sb = supabaseClient({ url: env.supabaseUrl, key: env.supabaseServiceKey })
 const catalog = componentCatalog({ client: sb });
 const templates = templateCatalog({ client: sb });
 const members = memberCatalog({ client: sb });
+const applications = applicationCatalog({ client: sb });
+const teams = teamCatalog({ client: sb });
 const releases = releaseCatalog({ client: sb });
 const store = platformConfigStore({ client: sb });
 
@@ -50,6 +58,12 @@ const usecases = {
   platformKeys: store.keys,
   listMembers: members.list,
   createMember: createMember({ members, repoHost }),
+  listApplications: listApplications({ applications }),
+  getApplication: getApplication({ applications }),
+  createApplication: createApplication({ applications, catalog }),
+  listTeams: listTeams({ teams }),
+  getTeam: getTeam({ teams }),
+  createTeam: createTeam({ teams, members }),
   listSecrets: listSecrets({ store }),
   upsertSecret: upsertSecret({ store }),
   secretEnvs: allowedEnvironments,
@@ -65,7 +79,7 @@ const usecases = {
   provision: provisionComponent({ catalog, store, repoHost, templates }),
 };
 usecases.createComponent = createComponent({
-  catalog, repoHost, templates, provision: usecases.provision,
+  catalog, repoHost, templates, applications, provision: usecases.provision,
 });
 
 createApp({ pkg, env, usecases, catalogReady, provisioningEnabled })

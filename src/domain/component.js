@@ -9,7 +9,7 @@ export const validComponentName = (name) => NAME_RE.test(name || '');
 export const validRepoName = (repo) => REPO_RE.test(repo || '');
 export const validShortname = (s) => SHORTNAME_RE.test(s || '');
 
-// Ensemble-style shortname: uppercase alias, prefixes manifest infra ids
+// Shortname: uppercase alias, prefixes manifest infra ids
 // (LOANSAPI → loans-api-pro style ci_ids). The wizard pre-fills this and
 // lets the user override it.
 export const shortnameFor = (name) => name.toUpperCase().replace(/[^A-Z0-9]/g, '');

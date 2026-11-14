@@ -1,7 +1,7 @@
-# deploy-orchestrator-api
+# ensemble-api
 
 Backend of the **progmise deploy orchestrator** — the API service behind
-[`deploy-orchestrator`](https://github.com/progmise/deploy-orchestrator) (the SPA).
+[`ensemble-web`](https://github.com/progmise/ensemble-web) (the SPA).
 Generated from `node-express-api-template`.
 
 ## What it does

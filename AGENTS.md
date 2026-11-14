@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guide for working on **deploy-orchestrator-api** — the backend service of the
+Guide for working on **ensemble-api** — the backend service of the
 progmise deploy orchestrator (generated from `node-express-api-template`).
 
 ## Architecture
@@ -80,7 +80,7 @@ db/schema.sql                 templates + components + platform_vars + members +
   `/api/me` returns `secret_envs`, the environments that login may write
   secrets for; logins without a member row keep broad access (bootstrap).
 
-- The SPA (`deploy-orchestrator`) proxies `/api/*` here — requests arrive
+- The SPA (`ensemble-web`) proxies `/api/*` here — requests arrive
   same-origin, so there is **no CORS** and the session cookie stays
   `SameSite=Lax` + HttpOnly.
 - `FRONTEND_URL` = the SPA origin: builds the OAuth `redirect_uri`
