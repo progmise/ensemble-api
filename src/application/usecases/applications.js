@@ -42,6 +42,14 @@ export const createApplication = ({ applications, catalog, teams }) =>
       description: description.trim(), repo_prefix: p,
       created_by: createdBy || '',
     });
+    // The creator joins as product-owner — app roles gate secret envs,
+    // so whoever registers the app needs a role on it. Best-effort:
+    // bootstrap users without a member row can't FK in.
+    if (createdBy)
+      await applications.addMember({
+        application: n, github_username: String(createdBy).toLowerCase(),
+        role: 'product-owner', added_by: String(createdBy),
+      }).catch(() => {});
     for (const c of components) await applications.setComponentApp(c, n);
     return { status: 201, application: withStage({ ...application, components: [] }) };
   };
