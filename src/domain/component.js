@@ -5,6 +5,13 @@ export const REPO_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/;
 export const SHORTNAME_RE = /^[A-Z0-9]{2,30}$/;
 export const BRANCH_STRATEGIES = ['gitflow', 'trunk'];
 
+// Application lifecycle stages — what the applications list filter offers.
+export const APP_LIFECYCLES = [
+  'Certification/Homologation', 'Decommissioned', 'Deleted', 'Development',
+  'Disuse/Inactive', 'Friends and Family', 'Preproduction', 'Production',
+  'Test',
+];
+
 export const validComponentName = (name) => NAME_RE.test(name || '');
 export const validRepoName = (repo) => REPO_RE.test(repo || '');
 export const validShortname = (s) => SHORTNAME_RE.test(s || '');
