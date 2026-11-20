@@ -17,7 +17,8 @@ export const releaseNo = (n) => `RLSE${String(n).padStart(7, '0')}`;
 // the environments: section (components use the same indent but appear
 // after `components:`).
 const envNamesOf = (yamlText) => {
-  const section = yamlText.split(/^components:/m)[0] || '';
+  const section = (yamlText.split(/^environments:/m)[1] || '')
+    .split(/^(trails|components|kind|metadata|version):/m)[0];
   return [...section.matchAll(/^  - name:\s*(\S+)/gm)].map((m) => m[1]);
 };
 
