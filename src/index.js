@@ -73,7 +73,7 @@ const usecases = {
   secretEnvs: allowedEnvironments({ applications }),
   listReleases: listReleases({ releases, repoHost, manifestRepo: env.manifestRepo }),
   releaseOptions: releaseOptions({ repoHost, manifestRepo: env.manifestRepo,
-    catalog }),
+    catalog, applications }),
   createRelease: createRelease({ releases, repoHost,
     manifestRepo: env.manifestRepo, catalog }),
   getRelease: getRelease({ releases, repoHost, manifestRepo: env.manifestRepo,
