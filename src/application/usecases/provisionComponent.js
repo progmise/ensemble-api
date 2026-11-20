@@ -204,29 +204,40 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
     return { vars_written: written };
   }
 
-  // `.deploy/targets.yml` of a repo — the ci_ids it deploys to. Reads the
-  // default branch, then development (tags predate the file for now).
+  // `.deploy/cd/{env}/cd.yml` of a repo — the ci_ids it deploys to, per
+  // environment folder ({env: [ids]}). Reads the default branch, then
+  // development; a legacy flat `.deploy/targets.yml` maps to '*'.
   async function repoTargets(repo) {
+    const ciIds = (text) => [...Buffer.from(text, 'base64').toString()
+      .matchAll(/^\s*-\s*ci_id:\s*(\S+)\s*$/gm)].map((m) => m[1]);
     for (const ref of ['', '?ref=development']) {
       try {
-        const f = await gh(`/repos/${repo}/contents/.deploy/targets.yml${ref}`);
-        return Buffer.from(f.content, 'base64').toString()
-          .split('\n').filter((l) => l.startsWith('  - '))
-          .map((l) => l.slice(4).trim());
+        const listing = await gh(`/repos/${repo}/contents/.deploy/cd${ref}`);
+        const out = {};
+        for (const e of listing) {
+          if (e.type !== 'dir') continue;
+          const f = await gh(`/repos/${repo}/contents/${e.path}/cd.yml${ref}`);
+          out[e.name] = ciIds(f.content);
+        }
+        if (Object.keys(out).length) return out;
       } catch { /* try next ref */ }
+      try {
+        const f = await gh(`/repos/${repo}/contents/.deploy/targets.yml${ref}`);
+        return { '*': ciIds(f.content) };
+      } catch { /* no targets declared */ }
     }
-    return [];
+    return {};
   }
 
-  // Commits `.deploy/targets.yml` — the repo declares which OAM
-  // infrastructures (ci_ids) it deploys to. App components get their own
-  // `<name>-pro` id; binding kinds (cm/secrets) inherit the configured
-  // app's ids (`config.configures`).
+  // Commits `.deploy/cd/{env}/cd.yml` — the repo declares which OAM
+  // infrastructures (ci_ids) it deploys to, per environment. App components
+  // get their own `<name>-pro` id; binding kinds (cm/secrets) inherit the
+  // configured app's env layout (`config.configures`).
   async function stepTargets(comp) {
     const spec = await specOf(comp);
     if (!spec.manifest)
       return { skipped: 'lib template: not a deploy component' };
-    let ids = [`${comp.name}-pro`];
+    let targets = { pro: [`${comp.name}-pro`] };
     if (BINDING_TYPES[spec.key]) {
       const repo = await manifestRepo(comp);
       const m = await readManifestFile(repoHost, repo, 'main');
@@ -234,23 +245,28 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
       const block = m?.text?.match(
         new RegExp(`  - name: ${target}\\n(?:    [^\\n]*\\n?)+`))?.[0];
       const targetRepo = block?.match(/^    repo: (\S+)/m)?.[1];
-      ids = targetRepo ? await repoTargets(targetRepo) : [];
-      if (!ids.length)
+      targets = targetRepo ? await repoTargets(targetRepo) : {};
+      if (!Object.keys(targets).length)
         throw new Error(`target '${target}' has no deploy targets in ${targetRepo || 'manifest'}`);
     }
+    if (targets['*']) targets = { pro: targets['*'] }; // legacy flat → pro
     const r = await gh(`/repos/${comp.repo}`);
-    const content = 'targets:\n' + ids.map((i) => `  - ${i}`).join('\n') + '\n';
-    let sha;
-    try {
-      sha = (await gh(`/repos/${comp.repo}/contents/.deploy/targets.yml`)).sha;
-    } catch { /* new file */ }
-    await gh(`/repos/${comp.repo}/contents/.deploy/targets.yml`, {
-      method: 'PUT',
-      body: { message: 'chore: declare deploy targets (ci_ids)',
-        content: Buffer.from(content).toString('base64'),
-        ...(sha ? { sha } : {}), branch: r.default_branch },
-    });
-    return { targets: ids };
+    const written = [];
+    for (const [env, ids] of Object.entries(targets)) {
+      const path = `.deploy/cd/${env}/cd.yml`;
+      let sha;
+      try {
+        sha = (await gh(`/repos/${comp.repo}/contents/${path}?ref=${r.default_branch}`)).sha;
+      } catch { /* new file */ }
+      await gh(`/repos/${comp.repo}/contents/${path}`, {
+        method: 'PUT',
+        body: { message: `chore: declare deploy targets for ${env} (ci_ids)`,
+          content: Buffer.from(ids.map((i) => `- ci_id: ${i}`).join('\n') + '\n').toString('base64'),
+          ...(sha ? { sha } : {}), branch: r.default_branch },
+      });
+      written.push(...ids);
+    }
+    return { targets: written };
   }
 
   // Insert the infra block (app components only) and the component entry
@@ -286,7 +302,8 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
       if (!block)
         throw new Error(`target component '${target}' not found in manifest`);
       const targetRepo = block.match(/^    repo: (\S+)/m)?.[1];
-      const ids = targetRepo ? await repoTargets(targetRepo) : [];
+      const ids = targetRepo
+        ? Object.values(await repoTargets(targetRepo)).flat() : [];
       infraIds = ids.join(', ') ||
         block.match(/^    infra: \[([^\]]*)\]/m)?.[1]?.trim();
       if (!infraIds)
