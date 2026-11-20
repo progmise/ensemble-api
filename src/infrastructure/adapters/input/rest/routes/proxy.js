@@ -32,7 +32,10 @@ export const proxyRouter = ({ usecases }) => {
         ['oam-application-definition.yml', 'manifest.yml']) {
         const r = await fetch(
           `https://raw.githubusercontent.com/${repo}/main/${name}`);
-        if (r.ok) return res.type('text/yaml').send(await r.text());
+        if (r.ok) {
+          res.set('x-manifest-repo', repo);
+          return res.type('text/yaml').send(await r.text());
+        }
       }
       res.status(404).type('text').send(`no OAM definition file in ${repo}`);
     });
