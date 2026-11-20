@@ -13,6 +13,12 @@ const repoOf = (row, fallback) => row?.manifest_repo || fallback;
 const SEMVER = /^\d+\.\d+\.\d+$/;
 export const releaseNo = (n) => `RLSE${String(n).padStart(7, '0')}`;
 
+// Draft GitHub Releases carry an `untagged-*` tag_name — the real tag only
+// exists once published — so a draft's version lives in its title (v<semver>).
+const versionOf = (r) =>
+  ((r.tag_name || '').startsWith('untagged-') ? r.name : r.tag_name || '')
+    .replace(/^v/, '');
+
 // Manifest YAML is strict-generated; env names sit at `  - name: X` inside
 // the environments: section (components use the same indent but appear
 // after `components:`).
@@ -25,16 +31,23 @@ const envNamesOf = (yamlText) => {
 const manifestRelease = async (repoHost, manifestRepo, version) => {
   const releases = await repoHost.api(
     `/repos/${manifestRepo}/releases?per_page=30`);
-  return releases.find((r) => r.tag_name === `v${version}`) || null;
+  return releases
+    .filter((r) => versionOf(r) === version)
+    .sort((a, b) => Number(a.draft) - Number(b.draft))[0] || null;
 };
 
+// Draft releases have no tag yet — their OAM is whatever main holds.
+const manifestAtVersion = (repoHost, manifestRepo, version) =>
+  readManifestFile(repoHost, manifestRepo, `v${version}`)
+    .then((m) => m || readManifestFile(repoHost, manifestRepo, 'main'));
+
 const manifestEnvs = async (repoHost, manifestRepo, version) => {
-  const m = await readManifestFile(repoHost, manifestRepo, `v${version}`);
+  const m = await manifestAtVersion(repoHost, manifestRepo, version);
   return m ? envNamesOf(m.text) : [];
 };
 
 const manifestComponents = async (repoHost, manifestRepo, version) => {
-  const m = await readManifestFile(repoHost, manifestRepo, `v${version}`);
+  const m = await manifestAtVersion(repoHost, manifestRepo, version);
   return m ? componentNamesOf(m.text) : null;
 };
 
@@ -59,11 +72,11 @@ export const releaseOptions = ({ repoHost, manifestRepo, catalog }) =>
         .catch(() => null),
     ]);
     const versions = ghReleases
-      .filter((r) => SEMVER.test(r.tag_name.replace(/^v/, '')))
+      .filter((r) => SEMVER.test(versionOf(r)))
       .sort((a, b) => Number(b.draft) - Number(a.draft)
-        || b.tag_name.localeCompare(a.tag_name, undefined, { numeric: true }))
+        || versionOf(b).localeCompare(versionOf(a), undefined, { numeric: true }))
       .map((r) => ({
-        version: r.tag_name.replace(/^v/, ''), draft: r.draft,
+        version: versionOf(r), draft: r.draft,
         name: r.name || r.tag_name,
       }));
     const envs = file ? envNamesOf(file.text) : [];
@@ -83,7 +96,7 @@ export const listReleases = ({ releases, repoHost, manifestRepo }) =>
       repoHost.api(`/repos/${repo}/releases?per_page=30`)
         .catch(() => [])));
     const byRepoTag = Object.fromEntries(ghLists.map((list, i) =>
-      [repos[i], Object.fromEntries(list.map((r) => [r.tag_name, r]))]));
+      [repos[i], Object.fromEntries(list.map((r) => [`v${versionOf(r)}`, r]))]));
     // Backfill the manifest component list on rows predating the column —
     // one fetch each, best-effort (same lazy pattern as lifecycle advance).
     await Promise.all(rows.filter((r) => r.components == null)
