@@ -18,7 +18,7 @@ export const env = {
   // Provisioning (fine-grained PAT + repo coordinates).
   provisioningToken: process.env.PROVISIONING_TOKEN || '',
   githubOwner: process.env.GITHUB_OWNER || 'progmise',
-  manifestRepo: process.env.MANIFEST_REPO || 'progmise/deploy-manifest',
+  manifestRepo: process.env.MANIFEST_REPO || 'progmise/ensemble-app-model',
 };
 
 export const catalogReady = () => Boolean(env.supabaseUrl && env.supabaseServiceKey);

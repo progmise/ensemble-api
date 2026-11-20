@@ -5,11 +5,33 @@ export const REPO_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/;
 export const SHORTNAME_RE = /^[A-Z0-9]{2,30}$/;
 export const BRANCH_STRATEGIES = ['gitflow', 'trunk'];
 
+// Lifecycle stages — components carry the stage (deployable unit); the
+// application's stage is derived as the max of its components'.
+export const APP_LIFECYCLES = [
+  'Certification/Homologation', 'Deleted', 'Development',
+  'Disuse/Inactive', 'Preproduction', 'Production',
+  'Test',
+];
+
+// Forward-only rank — terminal stages (Deleted, Disuse/Inactive) are
+// manual, never auto-assigned, so they rank out of the promotion track.
+export const LIFECYCLE_RANK = {
+  Development: 0, Test: 1, 'Certification/Homologation': 2,
+  Preproduction: 3, Production: 4,
+};
+export const stageRank = (s) => LIFECYCLE_RANK[s] ?? -1;
+
+// Application stage = max stage among its components (Development if none).
+export const deriveAppStage = (components = []) =>
+  components.reduce((best, c) =>
+    stageRank(c.lifecycle) > stageRank(best) ? c.lifecycle : best,
+    'Development');
+
 export const validComponentName = (name) => NAME_RE.test(name || '');
 export const validRepoName = (repo) => REPO_RE.test(repo || '');
 export const validShortname = (s) => SHORTNAME_RE.test(s || '');
 
-// Ensemble-style shortname: uppercase alias, prefixes manifest infra ids
+// Shortname: uppercase alias, prefixes manifest infra ids
 // (LOANSAPI → loans-api-pro style ci_ids). The wizard pre-fills this and
 // lets the user override it.
 export const shortnameFor = (name) => name.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -21,6 +43,10 @@ export const resolveConfig = (fields = [], answers = {}) => {
   const config = {};
   for (const f of fields) {
     if (f.type === 'fixed') { config[f.key] = f.value; continue; }
+    if (f.type === 'component') {           // free value — a catalog component name
+      config[f.key] = String(answers[f.key] ?? f.default ?? '');
+      continue;
+    }
     const v = answers[f.key];
     config[f.key] = (f.options || []).some((o) => o.value === v) ? v : f.default;
   }
