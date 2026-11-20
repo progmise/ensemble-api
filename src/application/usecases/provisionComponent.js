@@ -11,6 +11,7 @@
 // 'failed' component can be retried and resumes from the last good status.
 
 import sodium from 'libsodium-wrappers';
+import { readManifestFile } from './appModel.js';
 import { validComponentName, validRepoName, validShortname, shortnameFor,
   resolveConfig, BRANCH_STRATEGIES } from '../../domain/component.js';
 
@@ -35,7 +36,31 @@ const SPECS = {
       'GRAFANA_OTLP_AUTH'],
     vars: ['GRAFANA_OTLP_ENDPOINT'],
   },
+  cm: {
+    key: 'cm',
+    manifest: true, // registered as a `type: configmap` component
+    secrets: ['VERCEL_TOKEN'],
+    vars: ['VERCEL_ORG_ID'],
+  },
+  secrets: {
+    key: 'secrets',
+    manifest: true, // registered as a `type: secrets` component
+    secrets: ['VERCEL_TOKEN', 'SUPABASE_SERVICE_ROLE_KEY'],
+    vars: ['VERCEL_ORG_ID', 'SUPABASE_URL'],
+  },
+  // OAM application model — the repo hosts the app's own
+  // oam-application-definition.yml, so it never registers into a manifest.
+  'app-model': {
+    key: 'app-model',
+    manifest: false,
+    secrets: ['ORCHESTRATOR_TOKEN'],
+    vars: [],
+  },
 };
+
+// Manifest component type written by stepManifest for binding kinds (CM and
+// secrets bind to an existing app's infra instead of getting their own).
+export const BINDING_TYPES = { cm: 'configmap', secrets: 'secrets' };
 
 export const specFor = (kind) => SPECS[kind];
 
@@ -44,13 +69,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
   const gh = repoHost.api;
   const OWNER = repoHost.owner;
-  const MANIFEST_REPO = repoHost.manifestRepo;
+  // Each component registers into the OAM definition hosted by its
+  // application's app-model repo — env manifestRepo is the legacy fallback
+  // for apps that don't have an app-model component yet.
+  const manifestRepo = async (comp) =>
+    await catalog.appModelRepo(comp.application) || repoHost.manifestRepo;
 
-  // Resolves the template's provisioning spec from the catalog row —
-  // the registered kind is authoritative over any naming convention.
+  // Resolves the template's provisioning spec from the catalog row — the
+  // row's own spec jsonb is authoritative; the hardcoded kind-based SPECS
+  // only serve as fallback for legacy rows without one.
   async function specOf(comp) {
     const tpl = await templates.get(comp.template);
-    const spec = tpl && specFor(tpl.kind);
+    const spec = tpl && (Array.isArray(tpl.spec?.secrets)
+      ? { key: tpl.kind, ...tpl.spec } : specFor(tpl.kind));
     if (!spec) throw new Error(`unknown template '${comp.template}'`);
     return spec;
   }
@@ -161,73 +192,104 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
 
   // Insert the infra block (app components only) and the component entry
   // into manifest.yml, bump its version, and open the registration PR.
+  // Binding kinds (cm → configmap, secrets → secrets) register differently:
+  // no new infra — they bind to the configured app's infra ids
+  // (`config.configures`), carry their manifest `type`, and the app gains a
+  // `needs: [<comp>]` edge so config/secrets land before the app deploys.
   async function stepManifest(comp) {
-    if (!(await specOf(comp)).manifest)
+    const spec = await specOf(comp);
+    if (!spec.manifest)
       return { skipped: 'lib template: not a deploy component' };
+    const bindingType = BINDING_TYPES[spec.key];
     const repoName = comp.repo.split('/')[1];
-    const file = await gh(`/repos/${MANIFEST_REPO}/contents/manifest.yml?ref=main`);
-    let text = Buffer.from(file.content, 'base64').toString('utf8');
+    const repo = await manifestRepo(comp);
+    const m = await readManifestFile(repoHost, repo, 'main');
+    if (!m) throw new Error(`no OAM definition file in ${repo}`);
+    let text = m.text;
     if (new RegExp(`^  - name: ${comp.name}\\s*$`, 'm').test(text))
       return { skipped: 'component already in manifest' };
 
     text = text.replace(/^version: (\d+)\.(\d+)\.\d+/m,
       (_m, maj, min) => `version: ${maj}.${Number(min) + 1}.0`);
 
-    const infra = [
-      `      - id: ${comp.name}-pro`,
-      `        type: vercel`,
-      `        properties:`,
-      `          project: ${repoName}`,
-      `          orgId: VERCEL_ORG_ID`,
-      `          projectId: VERCEL_PROJECT_ID`,
-      `          credentialsId: VERCEL_TOKEN`,
-      ``,
-    ].join('\n');
-    if (!/^components:/m.test(text)) throw new Error('manifest has no components section');
-    text = text.replace(/^components:/m, `${infra}components:`);
+    let infraIds = `${comp.name}-pro`;
+    let prLine = `- infra \`${comp.name}-pro\` (vercel)`;
+    if (bindingType) {
+      const target = comp.config?.configures;
+      if (!target)
+        throw new Error(`${bindingType} component needs config.configures — the app it configures`);
+      const block = text.match(
+        new RegExp(`  - name: ${target}\\n(?:    [^\\n]*\\n?)+`))?.[0];
+      if (!block)
+        throw new Error(`target component '${target}' not found in manifest`);
+      const infra = block.match(/^    infra: \[([^\]]*)\]/m)?.[1]?.trim();
+      if (!infra)
+        throw new Error(`target '${target}' has no infra bindings in manifest`);
+      infraIds = infra;
+      const needs = block.match(/^    needs: \[([^\]]*)\]/m)?.[1]?.trim();
+      if (!needs?.split(',').map((s) => s.trim()).includes(comp.name)) {
+        text = text.replace(block, block.replace(/^    needs: \[[^\]]*\]/m,
+          `    needs: [${needs ? `${needs}, ` : ''}${comp.name}]`));
+      }
+      prLine = `- ${bindingType} for \`${target}\` — binds to ${infraIds}`;
+    } else {
+      const infra = [
+        `      - id: ${comp.name}-pro`,
+        `        type: vercel`,
+        `        properties:`,
+        `          project: ${repoName}`,
+        `          orgId: VERCEL_ORG_ID`,
+        `          projectId: VERCEL_PROJECT_ID`,
+        `          credentialsId: VERCEL_TOKEN`,
+        ``,
+      ].join('\n');
+      if (!/^components:/m.test(text)) throw new Error('manifest has no components section');
+      text = text.replace(/^components:/m, `${infra}components:`);
+    }
 
     const entry = [
       `  - name: ${comp.name}`,
       `    repo: ${comp.repo}`,
       `    tag: "0.1.0"`,
+      ...(bindingType ? [`    type: ${bindingType}`] : []),
       `    needs: []`,
-      `    infra: [${comp.name}-pro]`,
+      `    infra: [${infraIds}]`,
       ``,
     ].join('\n');
     text = text.endsWith('\n') ? text + entry : `${text}\n${entry}`;
 
-    const main = await gh(`/repos/${MANIFEST_REPO}/git/ref/heads/main`);
+    const main = await gh(`/repos/${repo}/git/ref/heads/main`);
     const branch = `component/${comp.name}`;
     try {
-      await gh(`/repos/${MANIFEST_REPO}/git/refs`, {
+      await gh(`/repos/${repo}/git/refs`, {
         method: 'POST', body: { ref: `refs/heads/${branch}`, sha: main.object.sha },
       });
     } catch (e) {
       if (!/Reference already exists/.test(e.message)) throw e;
     }
-    await gh(`/repos/${MANIFEST_REPO}/contents/manifest.yml`, {
+    await gh(`/repos/${repo}/contents/${m.name}`, {
       method: 'PUT',
       body: {
         message: `Register component ${comp.name}`,
         content: Buffer.from(text).toString('base64'),
-        sha: (await gh(`/repos/${MANIFEST_REPO}/contents/manifest.yml?ref=${branch}`)).sha,
+        sha: (await gh(`/repos/${repo}/contents/${m.name}?ref=${branch}`)).sha,
         branch,
       },
     });
 
     let pr;
     const open = await gh(
-      `/repos/${MANIFEST_REPO}/pulls?head=${MANIFEST_REPO.split('/')[0]}:${branch}&base=main&state=open`);
+      `/repos/${repo}/pulls?head=${repo.split('/')[0]}:${branch}&base=main&state=open`);
     if (open.length) {
       pr = open[0];
     } else {
-      pr = await gh(`/repos/${MANIFEST_REPO}/pulls`, {
+      pr = await gh(`/repos/${repo}/pulls`, {
         method: 'POST',
         body: {
           title: `Register component ${comp.name}`,
           head: branch,
           base: 'main',
-          body: `Provisions \`${comp.repo}\` (template \`${comp.template}\`).\n\n- component \`${comp.name}\`\n- infra \`${comp.name}-pro\` (vercel)\n\nManifest CI validates that tag \`0.1.0\` exists — merge after the repo's first release.\n\nGenerated by deploy-orchestrator.`,
+          body: `Provisions \`${comp.repo}\` (template \`${comp.template}\`).\n\n- component \`${comp.name}\`\n${prLine}\n\nManifest CI validates that tag \`0.1.0\` exists — merge after the repo's first release.\n\nGenerated by Ensemble.`,
         },
       });
     }
@@ -280,8 +342,8 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
 
 // Use case: validate + persist the catalog row, then provision it.
 // Returns { status, ... } — the REST adapter maps it to HTTP.
-export const createComponent = ({ catalog, repoHost, templates, provision }) =>
-  async ({ name, shortname, repo, description = '', template, config, createdBy }) => {
+export const createComponent = ({ catalog, repoHost, templates, provision, applications }) =>
+  async ({ name, shortname, repo, description = '', template, config, application, createdBy }) => {
     if (!validComponentName(name))
       return { status: 400, error: 'name must be lowercase letters, digits and hyphens' };
     if (!validRepoName(repo))
@@ -302,6 +364,8 @@ export const createComponent = ({ catalog, repoHost, templates, provision }) =>
       return { status: 400, error: `unknown template '${template}'` };
     if (await catalog.get(name))
       return { status: 409, error: `component '${name}' already exists` };
+    if (application && !(await applications?.get(application)))
+      return { status: 400, error: `unknown application '${application}'` };
 
     // Personalización answers are resolved server-side against the
     // template's declared fields — fixed values are authoritative, select
@@ -318,6 +382,7 @@ export const createComponent = ({ catalog, repoHost, templates, provision }) =>
       template,
       branch_strategy: branchStrategy,
       config: resolved,
+      application: application || null,
       created_by: createdBy,
     });
 

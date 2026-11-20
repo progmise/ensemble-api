@@ -20,15 +20,43 @@ export const releasesRouter = ({ usecases, catalogReady }) => {
       }
     })
 
+    .get('/api/deployments', async (req, res) => {
+      if (!await auth(req, res)) return;
+      if (guard(req, res)) return;
+      try {
+        res.json(await usecases.listDeployments());
+      } catch (e) {
+        res.status(502).json({ error: String(e.message || e) });
+      }
+    })
+
     .post('/api/releases', async (req, res) => {
       const session = await auth(req, res);
       if (!session) return;
       if (guard(req, res)) return;
-      const { version, description, planned_date } = req.body || {};
+      const { version, description, planned_date, trail, deploy_start,
+        deploy_end, reason, product_owner, requested_by, priority, risk,
+        details, impact, platform, justification, deploy_plan, risk_analysis,
+        test_plan, recovery_plan, unavailability, on_site_followup, db_change,
+        infra_change, application } = req.body || {};
       const result = await usecases.createRelease({
-        version, description, planned_date, createdBy: session.user.login,
+        version, description, planned_date, trail, deploy_start,
+        deploy_end, reason, product_owner, requested_by, priority, risk,
+        details, impact, platform, justification, deploy_plan, risk_analysis,
+        test_plan, recovery_plan, unavailability, on_site_followup, db_change,
+        infra_change, application, createdBy: session.user.login,
       });
       res.status(result.status).json(result.release ?? { error: result.error });
+    })
+
+    // Before /:number so "options" isn't parsed as a release number.
+    .get('/api/releases/options', async (req, res) => {
+      if (!await auth(req, res)) return;
+      try {
+        res.json(await usecases.releaseOptions(req.query.application));
+      } catch (e) {
+        res.status(502).json({ error: String(e.message || e) });
+      }
     })
 
     .get('/api/releases/:number', async (req, res) => {

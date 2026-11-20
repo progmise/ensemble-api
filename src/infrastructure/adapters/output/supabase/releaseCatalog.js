@@ -9,6 +9,13 @@ export const releaseCatalog = ({ client }) => ({
     return rows[0] || null;
   },
 
+  update: (number, patch) =>
+    client.rest(`releases?number=eq.${number}`, {
+      method: 'PATCH',
+      body: patch,
+      prefer: 'return=minimal',
+    }),
+
   create: (row) =>
     client.rest('releases', {
       method: 'POST',
@@ -19,6 +26,11 @@ export const releaseCatalog = ({ client }) => ({
   deployments: (releaseId) =>
     client.rest(
       `release_deployments?release_id=eq.${releaseId}&select=*&order=environment`),
+
+  allDeployments: () =>
+    client.rest(
+      'release_deployments?select=*,release:releases(number,version)'
+      + '&order=updated_at.desc'),
 
   upsertDeployment: (row) =>
     client.rest('release_deployments', {

@@ -10,7 +10,8 @@ const ghFetch = (token, url) =>
   });
 
 // /api/gh/<github api path>?<query> — proxies the GitHub API with the
-// caller's own token; /api/manifest serves deploy-manifest's manifest.yml.
+// caller's own token; /api/manifest serves an app's OAM definition from
+// its app-model repo (env manifest repo when the app has none).
 export const proxyRouter = ({ usecases }) => {
   const auth = authedUser({ resolveSession: usecases.resolveSession });
   return Router()
@@ -25,8 +26,14 @@ export const proxyRouter = ({ usecases }) => {
 
     .get('/api/manifest', async (req, res) => {
       if (!await auth(req, res)) return;
-      const r = await fetch(
-        'https://raw.githubusercontent.com/progmise/deploy-manifest/main/manifest.yml');
-      res.type('text/yaml').send(await r.text());
+      const application = String(req.query.application || '').trim();
+      const repo = await usecases.manifestRepoFor(application || null);
+      for (const name of
+        ['oam-application-definition.yml', 'manifest.yml']) {
+        const r = await fetch(
+          `https://raw.githubusercontent.com/${repo}/main/${name}`);
+        if (r.ok) return res.type('text/yaml').send(await r.text());
+      }
+      res.status(404).type('text').send(`no OAM definition file in ${repo}`);
     });
 };

@@ -32,6 +32,31 @@ export const componentsRouter = ({ usecases, catalogReady, provisioningEnabled }
       }
     })
 
+    .post('/api/templates', async (req, res) => {
+      if (!await auth(req, res)) return;
+      if (!catalogOk(res)) return;
+      if (!provisioningOk(res)) return;
+      const { name, repo, kind, display_name, description, fields, spec,
+        generate_from } = req.body || {};
+      const result = await usecases.createTemplate({
+        name, repo, kind, display_name, description, fields, spec,
+        generate_from,
+      });
+      res.status(result.status).json(result.template ?? { error: result.error });
+    })
+
+    // Credential key *names* only — the template wizard offers them as
+    // provisioning toggles; values never leave the store.
+    .get('/api/platform/keys', async (req, res) => {
+      if (!await auth(req, res)) return;
+      if (!catalogOk(res)) return;
+      try {
+        res.json(await usecases.platformKeys());
+      } catch (e) {
+        res.status(502).json({ error: String(e.message || e) });
+      }
+    })
+
     .get('/api/components', async (req, res) => {
       if (!await auth(req, res)) return;
       if (!catalogOk(res)) return;
@@ -47,9 +72,9 @@ export const componentsRouter = ({ usecases, catalogReady, provisioningEnabled }
       if (!session) return;
       if (!catalogOk(res)) return;
       if (!provisioningOk(res)) return;
-      const { name, shortname, repo, description = '', template, config } = req.body || {};
+      const { name, shortname, repo, description = '', template, config, application } = req.body || {};
       const result = await usecases.createComponent({
-        name, shortname, repo, description, template, config, createdBy: session.user.login,
+        name, shortname, repo, description, template, config, application, createdBy: session.user.login,
       });
       const { status, ...body } = result;
       res.status(status).json(result.component ?? body);

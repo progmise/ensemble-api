@@ -1,4 +1,4 @@
--- deploy-orchestrator-api — component catalog
+-- ensemble-api — component catalog
 -- Apply in the Supabase SQL editor (or `supabase db push`).
 --
 -- The API talks to this table via PostgREST using the service_role key,
@@ -17,7 +17,10 @@ create table if not exists public.templates (
   repo         text not null unique,
   -- 'app' = deployable component (manifest registration); 'lib' = library
   -- (Central publishing, no manifest step)
-  kind         text not null check (kind in ('app', 'lib')),
+  -- 'secrets' = secrets component (type: secrets — Vault-backed env vars)
+  -- kind: app | lib | cm | secrets | app-model (OAM application definition
+  -- host — each app has its own; the repo IS the manifest)
+  kind         text not null check (kind in ('app', 'lib', 'cm', 'secrets', 'app-model')),
   -- Friendly label for the wizard/list (e.g. "Node API (Express)");
   -- `name` stays the technical identifier.
   display_name text not null default '',
@@ -30,6 +33,12 @@ create table if not exists public.templates (
   -- branches the provisioner creates (gitflow: main+development;
   -- trunk: main only).
   fields       jsonb not null default '[]'::jsonb,
+  -- Provisioning spec — what the provisioner materializes into each repo
+  -- generated from this template (self-describing; supersedes the hardcoded
+  -- kind-based SPECS):
+  --   {manifest: bool, secrets: [platform_secrets names],
+  --    vars: [platform_vars keys]}
+  spec         jsonb not null default '{}'::jsonb,
   created_at   timestamptz not null default now()
 );
 
@@ -45,7 +54,7 @@ revoke all on public.templates from anon, authenticated;
 create table if not exists public.components (
   -- Component identity — lands in deploy-manifest as components[].name
   name             text primary key,
-  -- Uppercase/digit alias (Ensemble "short_name"); prefixes manifest infra ids
+  -- Uppercase/digit alias ("short_name"); prefixes manifest infra ids
   -- e.g. LOANSAPI -> loans-api-pro
   shortname        text not null,
   -- Full repo coordinates, e.g. progmise/loans-api
@@ -109,18 +118,55 @@ create or replace view public.platform_secrets as
 revoke all on public.platform_secrets from anon, authenticated;
 revoke all on public.platform_vars from anon, authenticated;
 
--- Team registry — gates login (alongside ALLOWED_USERS) and drives roles:
---   developer       repo access
---   technical-lead  approves PRs (future: required reviewer on release PRs)
+-- Write path into the Vault — PostgREST does not expose vault.*, so a
+-- security-definer wrapper upserts vault.secrets by name (service_role
+-- only; the Seguridad view writes application secrets as `<NAME>__<ENV>`).
+create or replace function public.put_platform_secret(p_name text, p_value text)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, vault
+as $$
+declare
+  v_id uuid;
+begin
+  select id into v_id from vault.secrets where name = p_name;
+  if v_id is null then
+    v_id := vault.create_secret(p_value, p_name);
+  else
+    perform vault.update_secret(v_id, p_value);
+  end if;
+  return v_id;
+end;
+$$;
+
+revoke all on function public.put_platform_secret(text, text) from anon, authenticated;
+
+-- Secret write audit — actor + logical name + environment, never values.
+create table if not exists public.secret_events (
+  id          bigint generated always as identity primary key,
+  actor       text not null,          -- GitHub login
+  name        text not null,          -- vault key (NAME__ENV)
+  environment text not null,          -- cert | pre | pro
+  action      text not null,          -- upsert
+  created_at  timestamptz not null default now()
+);
+
+alter table public.secret_events enable row level security;
+
+drop policy if exists secret_events_service on public.secret_events;
+create policy secret_events_service on public.secret_events
+  for all to service_role using (true) with check (true);
+
+-- Member registry — a row gates login (alongside ALLOWED_USERS bootstrap).
+-- No roles here: access means "can use the platform"; permissions live in
+-- application_members (per-app roles) and team membership.
 create table if not exists public.members (
   github_username text primary key,
   full_name       text not null,
   email           text not null,
-  roles           text[] not null default '{developer}',
   created_at      timestamptz not null default now(),
-  created_by      text,
-  constraint members_roles_check
-    check (roles <@ array['developer','technical-lead']::text[])
+  created_by      text
 );
 
 alter table public.members enable row level security;
@@ -138,9 +184,56 @@ create table if not exists public.releases (
   version      text not null,          -- manifest release version, e.g. 1.6.0
   description  text not null,
   planned_date date,
+  trail        text,                   -- deploy route, e.g. pre-pro-trails
+  deploy_start timestamptz,            -- window opens: no env deploys before
+  deploy_end   timestamptz,            -- window closes: no env deploys after
+  reason       text,                   -- New Application | New Version/Evolutive | ...
+  product_owner text,                  -- technical-lead member approving PRs
+  requested_by text,                   -- email of the member creating it
+  priority     text,                   -- 1 - Critical … 5 - Planning
+  risk         text,                   -- Extreme | High | Medium | Low | Minimal
+  details      text,                   -- long description (the "Descripción" field)
+  impact       text,                   -- 1 - High | 2 - Medium | 3 - Low
+  platform     text,                   -- Vercel | Render
+  justification text,                  -- justificación
+  deploy_plan  text,                   -- plan de implantación
+  risk_analysis text,                  -- análisis de riesgos e impactos
+  test_plan    text,                   -- plan de pruebas
+  recovery_plan text,                  -- plan de recuperación (enum)
+  unavailability text,                 -- Yes | No — indisponibilidad
+  on_site_followup text,               -- Yes | No — seguimiento presencial
+  db_change    text,                   -- Yes | No — cambio/inclusión de base de datos
+  infra_change text,                   -- Yes | No — cambio/inclusión de infraestructuras
+  components   text[],                 -- manifest@v<version> component names
+  application  text,                   -- app the release wraps (its OAM scope)
+  manifest_repo text,                  -- app-model repo the release lives in
   created_at   timestamptz not null default now(),
   created_by   text
 );
+
+alter table public.releases add column if not exists components text[];
+
+alter table public.releases
+  add column if not exists trail        text,
+  add column if not exists deploy_start timestamptz,
+  add column if not exists deploy_end   timestamptz,
+  add column if not exists reason       text,
+  add column if not exists product_owner text,
+  add column if not exists requested_by text,
+  add column if not exists priority     text,
+  add column if not exists risk         text,
+  add column if not exists details      text,
+  add column if not exists impact       text,
+  add column if not exists platform     text,
+  add column if not exists justification text,
+  add column if not exists deploy_plan  text,
+  add column if not exists risk_analysis text,
+  add column if not exists test_plan    text,
+  add column if not exists recovery_plan text,
+  add column if not exists unavailability  text,
+  add column if not exists on_site_followup text,
+  add column if not exists db_change       text,
+  add column if not exists infra_change    text;
 
 alter table public.releases enable row level security;
 
@@ -165,3 +258,114 @@ alter table public.release_deployments enable row level security;
 drop policy if exists release_deployments_service on public.release_deployments;
 create policy release_deployments_service on public.release_deployments
   for all to service_role using (true) with check (true);
+
+-- Application registry — the grouping level above components (an app like
+-- 'ensemble' owns the ensemble-web front + its api). Catalog-only
+-- metadata: deploy-manifest keeps flat components[].
+create table if not exists public.applications (
+  name          text primary key,            -- kebab-case, e.g. ensemble
+  alias         text not null,               -- uppercase short name, e.g. ENSMBL
+  business_unit text not null default '',
+  description   text not null default '',
+  created_by    text not null default '',
+  created_at    timestamptz not null default now()
+);
+
+alter table public.applications enable row level security;
+
+drop policy if exists applications_service on public.applications;
+create policy applications_service on public.applications
+  for all to service_role using (true) with check (true);
+
+alter table public.components
+  add column if not exists application text references public.applications(name);
+
+-- Repo naming convention per application — new components get repos named
+-- {repo_prefix}-{suffix} (defaults to the app name when empty). Lets an app
+-- keep a custom prefix (defaults to the application name).
+alter table public.applications
+  add column if not exists repo_prefix text not null default '';
+
+-- Incremental numeric id — shown as "ID: <n>" in the UI (name stays the PK).
+alter table public.applications
+  add column if not exists id bigint generated always as identity;
+create unique index if not exists applications_id_key on public.applications(id);
+
+-- Lifecycle lives on the component — the deployable unit. The
+-- application's stage is DERIVED (max of its components' stages) at read
+-- time; nothing is stored on applications.
+alter table public.components
+  add column if not exists lifecycle text not null default 'Development';
+
+-- One-time migration on existing databases:
+--   alter table public.applications drop column if exists lifecycle;
+--   update public.components set lifecycle = 'Production';  -- already shipped
+
+-- Team registry — high-level groups that own functionality (templates,
+-- workflows, application owners...). `type` stays free text: the granular
+-- permission types emerge as features demand gating (membership checks).
+create table if not exists public.teams (
+  name        text primary key,
+  shortname   text not null,
+  type        text not null default '',
+  description text not null default '',
+  created_by  text not null default '',
+  created_at  timestamptz not null default now()
+);
+
+-- Incremental numeric id — used in team URLs (/teams/<id>).
+alter table public.teams
+  add column if not exists id bigint generated always as identity;
+create unique index if not exists teams_id_key on public.teams(id);
+
+alter table public.teams enable row level security;
+
+drop policy if exists teams_service on public.teams;
+create policy teams_service on public.teams
+  for all to service_role using (true) with check (true);
+
+create table if not exists public.team_members (
+  team           text not null references public.teams(name) on delete cascade,
+  github_username text not null references public.members(github_username) on delete cascade,
+  owner          boolean not null default false,
+  added_by       text not null default '',
+  added_at       timestamptz not null default now(),
+  primary key (team, github_username)
+);
+
+alter table public.team_members enable row level security;
+
+drop policy if exists team_members_service on public.team_members;
+create policy team_members_service on public.team_members
+  for all to service_role using (true) with check (true);
+
+-- Per-application roles — membership in the platform (members row) grants
+-- login; what a member can DO on each app is gated by their roles here
+-- (a member may hold several, e.g. technical-lead + developer).
+create table if not exists public.application_members (
+  application     text not null references public.applications(name) on delete cascade,
+  github_username text not null references public.members(github_username) on delete cascade,
+  roles           text[] not null
+    check (cardinality(roles) > 0 and
+           roles <@ '{developer,technical-lead,product-owner}'::text[]),
+  added_by        text not null default '',
+  added_at        timestamptz not null default now(),
+  primary key (application, github_username)
+);
+-- Migration from the single-role column:
+--   alter table public.application_members drop constraint if exists application_members_role_check;
+--   alter table public.application_members rename column role to roles;
+--   alter table public.application_members alter column roles type text[] using array[roles];
+--   alter table public.application_members alter column roles set not null;
+--   alter table public.application_members add constraint application_members_roles_check
+--     check (cardinality(roles) > 0 and roles <@ '{developer,technical-lead,product-owner}'::text[]);
+
+alter table public.application_members enable row level security;
+
+drop policy if exists application_members_service on public.application_members;
+create policy application_members_service on public.application_members
+  for all to service_role using (true) with check (true);
+
+-- App creation is gated to members of a designated team (e.g. Platform Team).
+alter table public.teams
+  add column if not exists can_create_apps boolean not null default false;
