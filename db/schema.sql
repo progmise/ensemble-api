@@ -52,7 +52,7 @@ revoke all on public.templates from anon, authenticated;
 -- after seeding templates so existing rows resolve.
 
 create table if not exists public.components (
-  -- Component identity — lands in deploy-manifest as components[].name
+  -- Component identity — lands in the app-model OAM as components[].name
   name             text primary key,
   -- Uppercase/digit alias ("short_name"); prefixes manifest infra ids
   -- e.g. LOANSAPI -> loans-api-pro
@@ -176,7 +176,7 @@ create policy members_service on public.members
   for all to service_role using (true) with check (true);
 
 -- Release registry — one row per dashboard release (RLSE<number>). The
--- release itself lives in deploy-manifest as a GitHub Release (draft →
+-- release itself lives in the app-model repo as a GitHub Release (draft →
 -- published); this table carries the dashboard metadata (description,
 -- planned date) and tracks per-environment deploys.
 create table if not exists public.releases (
@@ -261,7 +261,7 @@ create policy release_deployments_service on public.release_deployments
 
 -- Application registry — the grouping level above components (an app like
 -- 'ensemble' owns the ensemble-web front + its api). Catalog-only
--- metadata: deploy-manifest keeps flat components[].
+-- metadata: the app-model keeps flat components[].
 create table if not exists public.applications (
   name          text primary key,            -- kebab-case, e.g. ensemble
   alias         text not null,               -- uppercase short name, e.g. ENSMBL

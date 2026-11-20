@@ -11,7 +11,7 @@ Generated from `node-express-api-template`.
 | `/api/auth/login` → `/api/auth/callback` | GitHub OAuth — `client_secret` never leaves the server; token goes into an HttpOnly `gh_token` cookie. `redirect_uri` = `FRONTEND_URL/api/auth/callback` (the SPA proxies it here) |
 | `/api/me` | Session user + `secret_envs` (secret-writable envs by role) (`401` anon, `403` not in `ALLOWED_USERS`) |
 | `/api/gh/*` | GitHub API proxy using the caller's own token |
-| `/api/manifest` | `deploy-manifest` `manifest.yml` (session required) |
+| `/api/manifest` | the app's app-model `oam-application-definition.yml` — resolves per `?application=` (session required) |
 | `/api/templates` | Template catalog (Supabase): `GET` list, `POST` register — validates the repo (flips `is_template` or `/generate`s from a base template repo) + the `fields`/`spec` schema |
 | `/api/platform/keys` | Credential key names for spec toggles (names only, never values) |
 | `/api/components` | Component catalog (Supabase): `GET` list, `POST` create + provision |
@@ -49,12 +49,15 @@ pending → repo_created → secrets_written → vars_written
    `VERCEL_PROJECT_ID` is written **empty** — the deploy workflow creates the
    Vercel project lazily on first deploy and fills the var
    (`ensure-vercel-project.sh`),
-3. opens a PR on `deploy-manifest` adding `components[]` + the
-   `environments[].infrastructures[]` vercel entry (`lib` templates skip it —
-   they publish to Central, not to a deploy target). `cm` (ConfigMap)
-   templates register differently: no new infra — the component is added
-   with `type: configmap`, bound to the `config.configures` app's infra
-   ids, and the app's `needs:` gains the CM so its env vars deploy first.
+3. commits `.deploy/cd/{env}/cd.yml` — the repo declares which
+   infrastructures (ci_ids) it deploys to, per environment folder,
+4. opens a PR on the app's app-model repo (`<app>-app-model`) adding
+   `components[]` + the `environments[].infrastructures[]` vercel entry
+   (`lib` templates skip it — they publish to Central, not to a deploy
+   target). `cm` (ConfigMap) templates register differently: no new infra —
+   the component is added with `type: configmap`, inherits the
+   `config.configures` app's deploy targets, and the app's `needs:` gains
+   the CM so its env vars deploy first.
 
 Seed the store in the Supabase SQL editor:
 
@@ -79,4 +82,4 @@ Vercel container (preset `Container` + root `Dockerfile`), env vars
 `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_ORG_ID`, `DOCKER_USERNAME`,
 `DOCKER_TOKEN`, `ORCHESTRATOR_TOKEN`, `DEPLOY_ENVIRONMENTS`
 (see `.env.example`). Releases and deploys run through the `app-*` pipelines —
-`Release` (tag + image) then `Deploy` (or the `deploy-manifest` orchestrator).
+`Release` (tag + image) then `Deploy` (or the app-model orchestrator).
