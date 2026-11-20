@@ -61,15 +61,21 @@ const decorate = (row, ghRelease) => ({
 // Options for the "Nueva release" form: every deploy-manifest GitHub
 // Release (drafts first, then published)
 // plus the deployment trails derivable from the manifest's environments.
-export const releaseOptions = ({ repoHost, manifestRepo, catalog }) =>
+// Application roles that may own a release — read from the app's
+// application_members (roles live per-app, not on the members row).
+const OWNER_ROLES = new Set(['technical-lead', 'product-owner']);
+
+export const releaseOptions = ({ repoHost, manifestRepo, catalog, applications }) =>
   async (application) => {
     const repo = (application && await catalog.appModelRepo(application))
       || manifestRepo;
-    const [ghReleases, file] = await Promise.all([
+    const [ghReleases, file, appRow] = await Promise.all([
       repoHost.api(`/repos/${repo}/releases?per_page=50`)
         .catch(() => []),
       readManifestFile(repoHost, repo, 'main')
         .catch(() => null),
+      application && applications
+        ? applications.get(application).catch(() => null) : null,
     ]);
     const versions = ghReleases
       .filter((r) => SEMVER.test(versionOf(r)))
@@ -80,9 +86,14 @@ export const releaseOptions = ({ repoHost, manifestRepo, catalog }) =>
         name: r.name || r.tag_name,
       }));
     const envs = file ? envNamesOf(file.text) : [];
+    const productOwners = (appRow?.application_members || [])
+      .filter((am) => (am.roles || []).some((r) => OWNER_ROLES.has(r)))
+      .map((am) => ({ email: am.members?.email, name: am.members?.full_name }))
+      .filter((m) => m.email);
     return {
       repo,
       versions,
+      productOwners,
       trails: envs.length
         ? [{ name: `${envs.join('-')}-trails`, environments: envs }]
         : [],
