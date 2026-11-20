@@ -204,10 +204,59 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
     return { vars_written: written };
   }
 
+  // `.deploy/targets.yml` of a repo — the ci_ids it deploys to. Reads the
+  // default branch, then development (tags predate the file for now).
+  async function repoTargets(repo) {
+    for (const ref of ['', '?ref=development']) {
+      try {
+        const f = await gh(`/repos/${repo}/contents/.deploy/targets.yml${ref}`);
+        return Buffer.from(f.content, 'base64').toString()
+          .split('\n').filter((l) => l.startsWith('  - '))
+          .map((l) => l.slice(4).trim());
+      } catch { /* try next ref */ }
+    }
+    return [];
+  }
+
+  // Commits `.deploy/targets.yml` — the repo declares which OAM
+  // infrastructures (ci_ids) it deploys to. App components get their own
+  // `<name>-pro` id; binding kinds (cm/secrets) inherit the configured
+  // app's ids (`config.configures`).
+  async function stepTargets(comp) {
+    const spec = await specOf(comp);
+    if (!spec.manifest)
+      return { skipped: 'lib template: not a deploy component' };
+    let ids = [`${comp.name}-pro`];
+    if (BINDING_TYPES[spec.key]) {
+      const repo = await manifestRepo(comp);
+      const m = await readManifestFile(repoHost, repo, 'main');
+      const target = comp.config?.configures;
+      const block = m?.text?.match(
+        new RegExp(`  - name: ${target}\\n(?:    [^\\n]*\\n?)+`))?.[0];
+      const targetRepo = block?.match(/^    repo: (\S+)/m)?.[1];
+      ids = targetRepo ? await repoTargets(targetRepo) : [];
+      if (!ids.length)
+        throw new Error(`target '${target}' has no deploy targets in ${targetRepo || 'manifest'}`);
+    }
+    const r = await gh(`/repos/${comp.repo}`);
+    const content = 'targets:\n' + ids.map((i) => `  - ${i}`).join('\n') + '\n';
+    let sha;
+    try {
+      sha = (await gh(`/repos/${comp.repo}/contents/.deploy/targets.yml`)).sha;
+    } catch { /* new file */ }
+    await gh(`/repos/${comp.repo}/contents/.deploy/targets.yml`, {
+      method: 'PUT',
+      body: { message: 'chore: declare deploy targets (ci_ids)',
+        content: Buffer.from(content).toString('base64'),
+        ...(sha ? { sha } : {}), branch: r.default_branch },
+    });
+    return { targets: ids };
+  }
+
   // Insert the infra block (app components only) and the component entry
   // into manifest.yml, bump its version, and open the registration PR.
   // Binding kinds (cm → configmap, secrets → secrets) register differently:
-  // no new infra — they bind to the configured app's infra ids
+  // no new infra — they inherit the configured app's deploy targets
   // (`config.configures`), carry their manifest `type`, and the app gains a
   // `needs: [<comp>]` edge so config/secrets land before the app deploys.
   async function stepManifest(comp) {
@@ -236,10 +285,12 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
         new RegExp(`  - name: ${target}\\n(?:    [^\\n]*\\n?)+`))?.[0];
       if (!block)
         throw new Error(`target component '${target}' not found in manifest`);
-      const infra = block.match(/^    infra: \[([^\]]*)\]/m)?.[1]?.trim();
-      if (!infra)
-        throw new Error(`target '${target}' has no infra bindings in manifest`);
-      infraIds = infra;
+      const targetRepo = block.match(/^    repo: (\S+)/m)?.[1];
+      const ids = targetRepo ? await repoTargets(targetRepo) : [];
+      infraIds = ids.join(', ') ||
+        block.match(/^    infra: \[([^\]]*)\]/m)?.[1]?.trim();
+      if (!infraIds)
+        throw new Error(`target '${target}' has no deploy targets in ${targetRepo || 'manifest'}`);
       const needs = block.match(/^    needs: \[([^\]]*)\]/m)?.[1]?.trim();
       if (!needs?.split(',').map((s) => s.trim()).includes(comp.name)) {
         text = text.replace(block, block.replace(/^    needs: \[[^\]]*\]/m,
@@ -267,7 +318,6 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
       `    tag: "0.1.0"`,
       ...(bindingType ? [`    type: ${bindingType}`] : []),
       `    needs: []`,
-      `    infra: [${infraIds}]`,
       ``,
     ].join('\n');
     text = text.endsWith('\n') ? text + entry : `${text}\n${entry}`;
@@ -314,7 +364,8 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
     { from: 'pending', to: 'repo_created', run: stepRepo },
     { from: 'repo_created', to: 'secrets_written', run: stepSecrets },
     { from: 'secrets_written', to: 'vars_written', run: stepVars },
-    { from: 'vars_written', to: 'manifest_pr_opened', run: stepManifest },
+    { from: 'vars_written', to: 'targets_written', run: stepTargets },
+    { from: 'targets_written', to: 'manifest_pr_opened', run: stepManifest },
   ];
 
   const running = new Set();
