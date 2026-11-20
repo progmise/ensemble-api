@@ -1,5 +1,5 @@
 // Use cases: release registry. A dashboard release (RLSE<number>) wraps a
-// deploy-manifest GitHub Release: `version` links them (tag v<version>).
+// app-model GitHub Release: `version` links them (tag v<version>).
 // Publish and per-env deploys go through repoHost with the admin token —
 // the frontend never touches GitHub directly for these actions.
 
@@ -58,7 +58,7 @@ const decorate = (row, ghRelease) => ({
   gh_release_url: ghRelease?.html_url || null,
 });
 
-// Options for the "Nueva release" form: every deploy-manifest GitHub
+// Options for the "Nueva release" form: every app-model GitHub
 // Release (drafts first, then published)
 // plus the deployment trails derivable from the manifest's environments.
 // Application roles that may own a release — read from the app's

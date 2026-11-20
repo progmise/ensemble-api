@@ -1,6 +1,6 @@
 // Output adapter: releases + release_deployments tables — the dashboard's
 // release registry. Each row links an incremental RLSE number to a
-// deploy-manifest release version; deployments track per-environment runs.
+// app-model release version; deployments track per-environment runs.
 export const releaseCatalog = ({ client }) => ({
   list: () => client.rest('releases?select=*&order=number.desc'),
 
