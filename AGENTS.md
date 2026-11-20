@@ -69,16 +69,26 @@ db/schema.sql                 templates + components + platform_vars + members +
   e.g. `configures` on ConfigMap templates). `components.branch_strategy`
   (`gitflow`/`trunk`) picks which branches the provisioner creates and
   protects: gitflow → main + development (dev default); trunk → main only.
-- Template kinds: `app` (deployable — infra block + component entry in the
-  manifest), `lib` (publishable — no manifest), `cm` (ConfigMap — registers
-  as `type: configmap`, binds to the `config.configures` app's infra ids,
-  and adds itself to that app's `needs:`), `secrets` (registers as
-  `type: secrets` — same infra-binding/needs mechanics as cm; its repos
+- Template kinds: `app` (deployable — `.deploy/cd/{env}/cd.yml` targets +
+  infra block + component entry in the app-model OAM), `lib` (publishable —
+  no manifest), `cm` (ConfigMap — registers as `type: configmap`, inherits
+  the `config.configures` app's deploy targets, and adds itself to that
+  app's `needs:`), `secrets` (registers as
+  `type: secrets` — same target-binding/needs mechanics as cm; its repos
   only declare secret names, values are upserted into `vault.secrets` as
   `NAME__ENV` via `POST /api/secrets` and deployed by `sec-deploy`).
 - Session resolution attaches the member row (`members` by GitHub login) —
   `/api/me` returns `secret_envs`, the environments that login may write
   secrets for; logins without a member row keep broad access (bootstrap).
+  Roles are **application-scoped** — `application_members.roles` per app
+  (`members` holds profile/access only); `technical-lead`/`product-owner`
+  unlock `pro` secrets and are the release "Dueño del producto" options.
+- Each application has an **app-model repo** (`<app>-app-model`, catalog
+  component of kind `app-model`) hosting its
+  `oam-application-definition.yml` — `/api/manifest?application=` resolves
+  it via the catalog (`components ⨝ templates`); `env.manifestRepo` is the
+  legacy fallback. Consumer repos declare their deploy targets in
+  `.deploy/cd/{env}/cd.yml` (ci_ids ⊆ OAM `infrastructures[].id`).
 
 - The SPA (`ensemble-web`) proxies `/api/*` here — requests arrive
   same-origin, so there is **no CORS** and the session cookie stays
