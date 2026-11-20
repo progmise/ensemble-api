@@ -18,7 +18,9 @@ create table if not exists public.templates (
   -- 'app' = deployable component (manifest registration); 'lib' = library
   -- (Central publishing, no manifest step)
   -- 'secrets' = secrets component (type: secrets — Vault-backed env vars)
-  kind         text not null check (kind in ('app', 'lib', 'cm', 'secrets')),
+  -- kind: app | lib | cm | secrets | app-model (OAM application definition
+  -- host — each app has its own; the repo IS the manifest)
+  kind         text not null check (kind in ('app', 'lib', 'cm', 'secrets', 'app-model')),
   -- Friendly label for the wizard/list (e.g. "Node API (Express)");
   -- `name` stays the technical identifier.
   display_name text not null default '',
@@ -203,6 +205,8 @@ create table if not exists public.releases (
   db_change    text,                   -- Yes | No — cambio/inclusión de base de datos
   infra_change text,                   -- Yes | No — cambio/inclusión de infraestructuras
   components   text[],                 -- manifest@v<version> component names
+  application  text,                   -- app the release wraps (its OAM scope)
+  manifest_repo text,                  -- app-model repo the release lives in
   created_at   timestamptz not null default now(),
   created_by   text
 );

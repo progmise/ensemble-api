@@ -5,6 +5,7 @@ import { env, catalogReady, provisioningEnabled } from './config/env.js';
 import { githubIdentity } from './infrastructure/adapters/output/githubIdentity.js';
 import { githubAdmin } from './infrastructure/adapters/output/githubAdmin.js';
 import { supabaseClient } from './infrastructure/adapters/output/supabase/client.js';
+import { manifestRepoFor } from './application/usecases/appModel.js';
 import { componentCatalog } from './infrastructure/adapters/output/supabase/componentCatalog.js';
 import { memberCatalog } from './infrastructure/adapters/output/supabase/memberCatalog.js';
 import { applicationCatalog } from './infrastructure/adapters/output/supabase/applicationCatalog.js';
@@ -71,9 +72,10 @@ const usecases = {
   upsertSecret: upsertSecret({ store, applications }),
   secretEnvs: allowedEnvironments({ applications }),
   listReleases: listReleases({ releases, repoHost, manifestRepo: env.manifestRepo }),
-  releaseOptions: releaseOptions({ repoHost, manifestRepo: env.manifestRepo }),
+  releaseOptions: releaseOptions({ repoHost, manifestRepo: env.manifestRepo,
+    catalog }),
   createRelease: createRelease({ releases, repoHost,
-    manifestRepo: env.manifestRepo }),
+    manifestRepo: env.manifestRepo, catalog }),
   getRelease: getRelease({ releases, repoHost, manifestRepo: env.manifestRepo,
                            catalog }),
   publishRelease: publishRelease({ releases, repoHost, manifestRepo: env.manifestRepo }),
@@ -82,6 +84,7 @@ const usecases = {
   listComponents: catalog.list,
   getComponent: catalog.get,
   provision: provisionComponent({ catalog, store, repoHost, templates }),
+  manifestRepoFor: manifestRepoFor({ catalog, repoHost }),
 };
 usecases.createComponent = createComponent({
   catalog, repoHost, templates, applications, provision: usecases.provision,

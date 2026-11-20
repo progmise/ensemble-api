@@ -4,6 +4,11 @@
 // the frontend never touches GitHub directly for these actions.
 
 import { stageRank } from '../../domain/component.js';
+import { readManifestFile } from './appModel.js';
+
+// A release remembers which app-model repo it wraps (manifest_repo on
+// the row); legacy rows fall back to the env-configured repo.
+const repoOf = (row, fallback) => row?.manifest_repo || fallback;
 
 const SEMVER = /^\d+\.\d+\.\d+$/;
 export const releaseNo = (n) => `RLSE${String(n).padStart(7, '0')}`;
@@ -23,24 +28,13 @@ const manifestRelease = async (repoHost, manifestRepo, version) => {
 };
 
 const manifestEnvs = async (repoHost, manifestRepo, version) => {
-  try {
-    const file = await repoHost.api(
-      `/repos/${manifestRepo}/contents/manifest.yml?ref=v${version}`);
-    return envNamesOf(Buffer.from(file.content, 'base64').toString('utf8'));
-  } catch {
-    return [];
-  }
+  const m = await readManifestFile(repoHost, manifestRepo, `v${version}`);
+  return m ? envNamesOf(m.text) : [];
 };
 
 const manifestComponents = async (repoHost, manifestRepo, version) => {
-  try {
-    const file = await repoHost.api(
-      `/repos/${manifestRepo}/contents/manifest.yml?ref=v${version}`);
-    return componentNamesOf(
-      Buffer.from(file.content, 'base64').toString('utf8'));
-  } catch {
-    return null;
-  }
+  const m = await readManifestFile(repoHost, manifestRepo, `v${version}`);
+  return m ? componentNamesOf(m.text) : null;
 };
 
 const decorate = (row, ghRelease) => ({
@@ -53,12 +47,14 @@ const decorate = (row, ghRelease) => ({
 // Options for the "Nueva release" form: every deploy-manifest GitHub
 // Release (drafts first, then published)
 // plus the deployment trails derivable from the manifest's environments.
-export const releaseOptions = ({ repoHost, manifestRepo }) =>
-  async () => {
+export const releaseOptions = ({ repoHost, manifestRepo, catalog }) =>
+  async (application) => {
+    const repo = (application && await catalog.appModelRepo(application))
+      || manifestRepo;
     const [ghReleases, file] = await Promise.all([
-      repoHost.api(`/repos/${manifestRepo}/releases?per_page=50`)
+      repoHost.api(`/repos/${repo}/releases?per_page=50`)
         .catch(() => []),
-      repoHost.api(`/repos/${manifestRepo}/contents/manifest.yml?ref=main`)
+      readManifestFile(repoHost, repo, 'main')
         .catch(() => null),
     ]);
     const versions = ghReleases
@@ -69,9 +65,7 @@ export const releaseOptions = ({ repoHost, manifestRepo }) =>
         version: r.tag_name.replace(/^v/, ''), draft: r.draft,
         name: r.name || r.tag_name,
       }));
-    const envs = file
-      ? envNamesOf(Buffer.from(file.content, 'base64').toString('utf8'))
-      : [];
+    const envs = file ? envNamesOf(file.text) : [];
     return {
       versions,
       trails: envs.length
@@ -82,25 +76,26 @@ export const releaseOptions = ({ repoHost, manifestRepo }) =>
 
 export const listReleases = ({ releases, repoHost, manifestRepo }) =>
   async () => {
-    const [rows, ghReleases] = await Promise.all([
-      releases.list(),
-      repoHost.api(`/repos/${manifestRepo}/releases?per_page=30`)
-        .catch(() => []),
-    ]);
-    const byTag = Object.fromEntries(
-      ghReleases.map((r) => [r.tag_name, r]));
+    const rows = await releases.list();
+    const repos = [...new Set(rows.map((r) => repoOf(r, manifestRepo)))];
+    const ghLists = await Promise.all(repos.map((repo) =>
+      repoHost.api(`/repos/${repo}/releases?per_page=30`)
+        .catch(() => [])));
+    const byRepoTag = Object.fromEntries(ghLists.map((list, i) =>
+      [repos[i], Object.fromEntries(list.map((r) => [r.tag_name, r]))]));
     // Backfill the manifest component list on rows predating the column —
     // one fetch each, best-effort (same lazy pattern as lifecycle advance).
     await Promise.all(rows.filter((r) => r.components == null)
       .map(async (r) => {
         const components = await manifestComponents(
-          repoHost, manifestRepo, r.version);
+          repoHost, repoOf(r, manifestRepo), r.version);
         if (components) {
           r.components = components;
           await releases.update(r.number, { components }).catch(() => {});
         }
       }));
-    return rows.map((r) => decorate(r, byTag[`v${r.version}`]));
+    return rows.map((r) =>
+      decorate(r, byRepoTag[repoOf(r, manifestRepo)]?.[`v${r.version}`]));
   };
 
 const REASONS = ['New Application', 'New Version/Evolutive', 'Incident', 'Problem'];
@@ -115,12 +110,12 @@ const RECOVERY_PLANS = [
   'Return to previous version',
 ];
 
-export const createRelease = ({ releases, repoHost, manifestRepo }) =>
+export const createRelease = ({ releases, repoHost, manifestRepo, catalog }) =>
   async ({ version, description, planned_date, trail, deploy_start,
     deploy_end, reason, product_owner, requested_by, priority, risk,
     details, impact, platform, justification, deploy_plan, risk_analysis,
     test_plan, recovery_plan, unavailability, on_site_followup, db_change,
-    infra_change, createdBy }) => {
+    infra_change, application, createdBy }) => {
     const v = String(version || '').trim();
     if (!SEMVER.test(v)) return { status: 400, error: 'version must be semver (x.y.z)' };
     if (!String(description || '').trim())
@@ -147,9 +142,12 @@ export const createRelease = ({ releases, repoHost, manifestRepo }) =>
         return { status: 400, error: `${key} must be a datetime` };
     if (deploy_start && deploy_end && Date.parse(deploy_end) <= Date.parse(deploy_start))
       return { status: 400, error: 'deploy_end must be after deploy_start' };
-    const components = await manifestComponents(repoHost, manifestRepo, v);
+    const app = String(application || '').trim().toLowerCase() || null;
+    const repo = (app && await catalog.appModelRepo(app)) || manifestRepo;
+    const components = await manifestComponents(repoHost, repo, v);
     const release = await releases.create({
       version: v, description: description.trim(), components,
+      application: app, manifest_repo: repo,
       planned_date: planned_date || null, created_by: createdBy || null,
       trail: trail || null,
       deploy_start: deploy_start || null, deploy_end: deploy_end || null,
@@ -203,10 +201,9 @@ const advanceComponentLifecycles = async (
   const stage = STAGE_OF_ENV[environment];
   if (!stage || !catalog) return;
   try {
-    const file = await repoHost.api(
-      `/repos/${manifestRepo}/contents/manifest.yml?ref=v${version}`);
-    const names = componentNamesOf(
-      Buffer.from(file.content, 'base64').toString('utf8'));
+    const m = await readManifestFile(repoHost, manifestRepo, `v${version}`);
+    if (!m) return;
+    const names = componentNamesOf(m.text);
     for (const n of names) {
       const c = await catalog.get(n).catch(() => null);
       if (c && stageRank(c.lifecycle) < stageRank(stage))
@@ -240,13 +237,14 @@ export const getRelease = ({ releases, repoHost, manifestRepo, catalog }) =>
   async (number) => {
     const row = await releases.get(number);
     if (!row) return { status: 404, error: 'release not found' };
+    const repo = repoOf(row, manifestRepo);
     const [gh, environments, deps] = await Promise.all([
-      manifestRelease(repoHost, manifestRepo, row.version).catch(() => null),
-      manifestEnvs(repoHost, manifestRepo, row.version).catch(() => []),
+      manifestRelease(repoHost, repo, row.version).catch(() => null),
+      manifestEnvs(repoHost, repo, row.version).catch(() => []),
       releases.deployments(row.number),
     ]);
     const deployments = await refreshDeployments(
-      { releases, repoHost, manifestRepo, catalog }, row.version, deps);
+      { releases, repoHost, manifestRepo: repo, catalog }, row.version, deps);
     return {
       status: 200,
       release: { ...decorate(row, gh), environments, deployments },
@@ -257,12 +255,13 @@ export const publishRelease = ({ releases, repoHost, manifestRepo }) =>
   async (number) => {
     const row = await releases.get(number);
     if (!row) return { status: 404, error: 'release not found' };
-    const gh = await manifestRelease(repoHost, manifestRepo, row.version);
+    const repo = repoOf(row, manifestRepo);
+    const gh = await manifestRelease(repoHost, repo, row.version);
     if (!gh)
-      return { status: 409, error: `no GitHub release v${row.version} on ${manifestRepo}` };
+      return { status: 409, error: `no GitHub release v${row.version} on ${repo}` };
     if (!gh.draft) return { status: 200, release: decorate(row, gh) };
     const updated = await repoHost.api(
-      `/repos/${manifestRepo}/releases/${gh.id}`,
+      `/repos/${repo}/releases/${gh.id}`,
       { method: 'PATCH', body: { draft: false } });
     return { status: 200, release: decorate(row, updated) };
   };
@@ -276,7 +275,8 @@ export const deployRelease = ({ releases, repoHost, manifestRepo }) =>
     if (!row) return { status: 404, error: 'release not found' };
     const env = String(environment || '').trim();
     if (!env) return { status: 400, error: 'environment required' };
-    const gh = await manifestRelease(repoHost, manifestRepo, row.version);
+    const repo = repoOf(row, manifestRepo);
+    const gh = await manifestRelease(repoHost, repo, row.version);
     if (!gh || gh.draft)
       return { status: 409, error: `release v${row.version} is not published` };
     // Deployment window — outside it no environment can be deployed,
@@ -287,7 +287,7 @@ export const deployRelease = ({ releases, repoHost, manifestRepo }) =>
       return { status: 409, error: `deployment window closed at ${row.deploy_end}` };
 
     await repoHost.api(
-      `/repos/${manifestRepo}/actions/workflows/deploy.yml/dispatches`,
+      `/repos/${repo}/actions/workflows/deploy.yml/dispatches`,
       {
         method: 'POST',
         body: {
@@ -305,7 +305,7 @@ export const deployRelease = ({ releases, repoHost, manifestRepo }) =>
     let run = null;
     try {
       const data = await repoHost.api(
-        `/repos/${manifestRepo}/actions/workflows/deploy.yml/runs` +
+        `/repos/${repo}/actions/workflows/deploy.yml/runs` +
         `?event=workflow_dispatch&per_page=5`);
       run = (data.workflow_runs || [])
         .find((r) => r.created_at >= since.slice(0, 16)) || data.workflow_runs?.[0];

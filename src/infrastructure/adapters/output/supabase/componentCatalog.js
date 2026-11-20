@@ -15,6 +15,17 @@ export const componentCatalog = ({ client }) => ({
       prefer: 'return=representation',
     }).then((rows) => rows[0]),
 
+  // The app-model component of an application is the repo hosting its OAM
+  // application definition — returns `owner/repo` or null when the app has
+  // no app-model component yet.
+  appModelRepo: async (application) => {
+    const rows = await client.rest(
+      `components?application=eq.${encodeURIComponent(application)}` +
+      `&select=repo,templates!inner(kind)` +
+      `&templates.kind=eq.app-model&limit=1`);
+    return rows[0]?.repo || null;
+  },
+
   update: (name, patch) =>
     client.rest(`components?name=eq.${encodeURIComponent(name)}`, {
       method: 'PATCH',

@@ -11,6 +11,7 @@
 // 'failed' component can be retried and resumes from the last good status.
 
 import sodium from 'libsodium-wrappers';
+import { readManifestFile } from './appModel.js';
 import { validComponentName, validRepoName, validShortname, shortnameFor,
   resolveConfig, BRANCH_STRATEGIES } from '../../domain/component.js';
 
@@ -47,6 +48,14 @@ const SPECS = {
     secrets: ['VERCEL_TOKEN', 'SUPABASE_SERVICE_ROLE_KEY'],
     vars: ['VERCEL_ORG_ID', 'SUPABASE_URL'],
   },
+  // OAM application model — the repo hosts the app's own
+  // oam-application-definition.yml, so it never registers into a manifest.
+  'app-model': {
+    key: 'app-model',
+    manifest: false,
+    secrets: ['ORCHESTRATOR_TOKEN'],
+    vars: [],
+  },
 };
 
 // Manifest component type written by stepManifest for binding kinds (CM and
@@ -60,7 +69,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
   const gh = repoHost.api;
   const OWNER = repoHost.owner;
-  const MANIFEST_REPO = repoHost.manifestRepo;
+  // Each component registers into the OAM definition hosted by its
+  // application's app-model repo — env manifestRepo is the legacy fallback
+  // for apps that don't have an app-model component yet.
+  const manifestRepo = async (comp) =>
+    await catalog.appModelRepo(comp.application) || repoHost.manifestRepo;
 
   // Resolves the template's provisioning spec from the catalog row — the
   // row's own spec jsonb is authoritative; the hardcoded kind-based SPECS
@@ -189,8 +202,10 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
       return { skipped: 'lib template: not a deploy component' };
     const bindingType = BINDING_TYPES[spec.key];
     const repoName = comp.repo.split('/')[1];
-    const file = await gh(`/repos/${MANIFEST_REPO}/contents/manifest.yml?ref=main`);
-    let text = Buffer.from(file.content, 'base64').toString('utf8');
+    const repo = await manifestRepo(comp);
+    const m = await readManifestFile(repoHost, repo, 'main');
+    if (!m) throw new Error(`no OAM definition file in ${repo}`);
+    let text = m.text;
     if (new RegExp(`^  - name: ${comp.name}\\s*$`, 'm').test(text))
       return { skipped: 'component already in manifest' };
 
@@ -243,32 +258,32 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
     ].join('\n');
     text = text.endsWith('\n') ? text + entry : `${text}\n${entry}`;
 
-    const main = await gh(`/repos/${MANIFEST_REPO}/git/ref/heads/main`);
+    const main = await gh(`/repos/${repo}/git/ref/heads/main`);
     const branch = `component/${comp.name}`;
     try {
-      await gh(`/repos/${MANIFEST_REPO}/git/refs`, {
+      await gh(`/repos/${repo}/git/refs`, {
         method: 'POST', body: { ref: `refs/heads/${branch}`, sha: main.object.sha },
       });
     } catch (e) {
       if (!/Reference already exists/.test(e.message)) throw e;
     }
-    await gh(`/repos/${MANIFEST_REPO}/contents/manifest.yml`, {
+    await gh(`/repos/${repo}/contents/${m.name}`, {
       method: 'PUT',
       body: {
         message: `Register component ${comp.name}`,
         content: Buffer.from(text).toString('base64'),
-        sha: (await gh(`/repos/${MANIFEST_REPO}/contents/manifest.yml?ref=${branch}`)).sha,
+        sha: (await gh(`/repos/${repo}/contents/${m.name}?ref=${branch}`)).sha,
         branch,
       },
     });
 
     let pr;
     const open = await gh(
-      `/repos/${MANIFEST_REPO}/pulls?head=${MANIFEST_REPO.split('/')[0]}:${branch}&base=main&state=open`);
+      `/repos/${repo}/pulls?head=${repo.split('/')[0]}:${branch}&base=main&state=open`);
     if (open.length) {
       pr = open[0];
     } else {
-      pr = await gh(`/repos/${MANIFEST_REPO}/pulls`, {
+      pr = await gh(`/repos/${repo}/pulls`, {
         method: 'POST',
         body: {
           title: `Register component ${comp.name}`,
