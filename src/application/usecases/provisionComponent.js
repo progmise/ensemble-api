@@ -18,7 +18,7 @@ import { validComponentName, validRepoName, validShortname, shortnameFor,
 // What the provisioner materializes into each new repo, per template kind.
 // Values come from the platform credential store (Supabase) — secrets are
 // written as GitHub repo secrets, vars as GitHub repo variables, matching
-// the *Id references declared in deploy-manifest's infrastructures.
+// the *Id references declared in the app-model's infrastructures.
 // VERCEL_PROJECT_ID is written empty: the infra is created lazily by the
 // deploy workflow (scripts/ensure-vercel-project.sh) on first deploy.
 const SPECS = {
