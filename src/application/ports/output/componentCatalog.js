@@ -4,7 +4,7 @@
 
 /**
  * @typedef {object} Component
- * @property {string} name          PK — lands in deploy-manifest components[].name
+ * @property {string} name          PK — lands in the app-model components[].name
  * @property {string} shortname     uppercase/digit alias, prefixes infra ids
  * @property {string} repo          full coordinates, e.g. progmise/loans-api
  * @property {string} description

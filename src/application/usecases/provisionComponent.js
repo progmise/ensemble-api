@@ -18,7 +18,7 @@ import { validComponentName, validRepoName, validShortname, shortnameFor,
 // What the provisioner materializes into each new repo, per template kind.
 // Values come from the platform credential store (Supabase) — secrets are
 // written as GitHub repo secrets, vars as GitHub repo variables, matching
-// the *Id references declared in deploy-manifest's infrastructures.
+// the *Id references declared in the app-model's infrastructures.
 // VERCEL_PROJECT_ID is written empty: the infra is created lazily by the
 // deploy workflow (scripts/ensure-vercel-project.sh) on first deploy.
 const SPECS = {
@@ -204,10 +204,75 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
     return { vars_written: written };
   }
 
+  // `.deploy/cd/{env}/cd.yml` of a repo — the ci_ids it deploys to, per
+  // environment folder ({env: [ids]}). Reads the default branch, then
+  // development; a legacy flat `.deploy/targets.yml` maps to '*'.
+  async function repoTargets(repo) {
+    const ciIds = (text) => [...Buffer.from(text, 'base64').toString()
+      .matchAll(/^\s*-\s*ci_id:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+    for (const ref of ['', '?ref=development']) {
+      try {
+        const listing = await gh(`/repos/${repo}/contents/.deploy/cd${ref}`);
+        const out = {};
+        for (const e of listing) {
+          if (e.type !== 'dir') continue;
+          const f = await gh(`/repos/${repo}/contents/${e.path}/cd.yml${ref}`);
+          out[e.name] = ciIds(f.content);
+        }
+        if (Object.keys(out).length) return out;
+      } catch { /* try next ref */ }
+      try {
+        const f = await gh(`/repos/${repo}/contents/.deploy/targets.yml${ref}`);
+        return { '*': ciIds(f.content) };
+      } catch { /* no targets declared */ }
+    }
+    return {};
+  }
+
+  // Commits `.deploy/cd/{env}/cd.yml` — the repo declares which OAM
+  // infrastructures (ci_ids) it deploys to, per environment. App components
+  // get their own `<name>-pro` id; binding kinds (cm/secrets) inherit the
+  // configured app's env layout (`config.configures`).
+  async function stepTargets(comp) {
+    const spec = await specOf(comp);
+    if (!spec.manifest)
+      return { skipped: 'lib template: not a deploy component' };
+    let targets = { pro: [`${comp.name}-pro`] };
+    if (BINDING_TYPES[spec.key]) {
+      const repo = await manifestRepo(comp);
+      const m = await readManifestFile(repoHost, repo, 'main');
+      const target = comp.config?.configures;
+      const block = m?.text?.match(
+        new RegExp(`  - name: ${target}\\n(?:    [^\\n]*\\n?)+`))?.[0];
+      const targetRepo = block?.match(/^    repo: (\S+)/m)?.[1];
+      targets = targetRepo ? await repoTargets(targetRepo) : {};
+      if (!Object.keys(targets).length)
+        throw new Error(`target '${target}' has no deploy targets in ${targetRepo || 'manifest'}`);
+    }
+    if (targets['*']) targets = { pro: targets['*'] }; // legacy flat → pro
+    const r = await gh(`/repos/${comp.repo}`);
+    const written = [];
+    for (const [env, ids] of Object.entries(targets)) {
+      const path = `.deploy/cd/${env}/cd.yml`;
+      let sha;
+      try {
+        sha = (await gh(`/repos/${comp.repo}/contents/${path}?ref=${r.default_branch}`)).sha;
+      } catch { /* new file */ }
+      await gh(`/repos/${comp.repo}/contents/${path}`, {
+        method: 'PUT',
+        body: { message: `chore: declare deploy targets for ${env} (ci_ids)`,
+          content: Buffer.from(ids.map((i) => `- ci_id: ${i}`).join('\n') + '\n').toString('base64'),
+          ...(sha ? { sha } : {}), branch: r.default_branch },
+      });
+      written.push(...ids);
+    }
+    return { targets: written };
+  }
+
   // Insert the infra block (app components only) and the component entry
   // into manifest.yml, bump its version, and open the registration PR.
   // Binding kinds (cm → configmap, secrets → secrets) register differently:
-  // no new infra — they bind to the configured app's infra ids
+  // no new infra — they inherit the configured app's deploy targets
   // (`config.configures`), carry their manifest `type`, and the app gains a
   // `needs: [<comp>]` edge so config/secrets land before the app deploys.
   async function stepManifest(comp) {
@@ -236,10 +301,13 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
         new RegExp(`  - name: ${target}\\n(?:    [^\\n]*\\n?)+`))?.[0];
       if (!block)
         throw new Error(`target component '${target}' not found in manifest`);
-      const infra = block.match(/^    infra: \[([^\]]*)\]/m)?.[1]?.trim();
-      if (!infra)
-        throw new Error(`target '${target}' has no infra bindings in manifest`);
-      infraIds = infra;
+      const targetRepo = block.match(/^    repo: (\S+)/m)?.[1];
+      const ids = targetRepo
+        ? Object.values(await repoTargets(targetRepo)).flat() : [];
+      infraIds = ids.join(', ') ||
+        block.match(/^    infra: \[([^\]]*)\]/m)?.[1]?.trim();
+      if (!infraIds)
+        throw new Error(`target '${target}' has no deploy targets in ${targetRepo || 'manifest'}`);
       const needs = block.match(/^    needs: \[([^\]]*)\]/m)?.[1]?.trim();
       if (!needs?.split(',').map((s) => s.trim()).includes(comp.name)) {
         text = text.replace(block, block.replace(/^    needs: \[[^\]]*\]/m,
@@ -267,7 +335,6 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
       `    tag: "0.1.0"`,
       ...(bindingType ? [`    type: ${bindingType}`] : []),
       `    needs: []`,
-      `    infra: [${infraIds}]`,
       ``,
     ].join('\n');
     text = text.endsWith('\n') ? text + entry : `${text}\n${entry}`;
@@ -314,7 +381,8 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
     { from: 'pending', to: 'repo_created', run: stepRepo },
     { from: 'repo_created', to: 'secrets_written', run: stepSecrets },
     { from: 'secrets_written', to: 'vars_written', run: stepVars },
-    { from: 'vars_written', to: 'manifest_pr_opened', run: stepManifest },
+    { from: 'vars_written', to: 'targets_written', run: stepTargets },
+    { from: 'targets_written', to: 'manifest_pr_opened', run: stepManifest },
   ];
 
   const running = new Set();

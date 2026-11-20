@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authedUser } from '../middleware/session.js';
 
 // Component catalog & provisioning — Supabase holds the lifecycle registry;
-// deploy-manifest is its deployable projection (a registration PR lands
+// the app-model is its deployable projection (a registration PR lands
 // when provisioning completes).
 export const componentsRouter = ({ usecases, catalogReady, provisioningEnabled }) => {
   const auth = authedUser({ resolveSession: usecases.resolveSession });
