@@ -81,6 +81,7 @@ export const releaseOptions = ({ repoHost, manifestRepo, catalog }) =>
       }));
     const envs = file ? envNamesOf(file.text) : [];
     return {
+      repo,
       versions,
       trails: envs.length
         ? [{ name: `${envs.join('-')}-trails`, environments: envs }]
