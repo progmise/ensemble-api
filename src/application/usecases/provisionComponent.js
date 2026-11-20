@@ -187,6 +187,20 @@ export const provisionComponent = ({ catalog, store, repoHost, templates }) => {
       }
       written.push(name);
     }
+    // The app-model repo hosting this component's OAM — integration
+    // deploys read it to gate which environment each branch deploys to.
+    const modelRepo = await manifestRepo(comp).catch(() => null);
+    if (modelRepo) {
+      try {
+        await gh(`/repos/${comp.repo}/actions/variables`, {
+          method: 'POST', body: { name: 'APP_MODEL_REPO', value: modelRepo } });
+      } catch (e) {
+        if (!/409|already exists/i.test(e.message)) throw e;
+        await gh(`/repos/${comp.repo}/actions/variables/APP_MODEL_REPO`, {
+          method: 'PATCH', body: { value: modelRepo } });
+      }
+      written.push('APP_MODEL_REPO');
+    }
     return { vars_written: written };
   }
 
